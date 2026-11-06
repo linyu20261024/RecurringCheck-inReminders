@@ -1,4 +1,4 @@
-name: Deploy CardVault to GitHub Pages
+name: Deploy RecurringCheck-inReminders to GitHub Pages
 
 on:
   push:
