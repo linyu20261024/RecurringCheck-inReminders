@@ -10,6 +10,7 @@ import {
   saveDataToLocalStorage,
   isRuleScheduledForDate,
   deleteRuleAndPendingRecords,
+  skipFutureMonthlyLimitRecords,
 } from './services/dataStorage';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { TaskRemindersView } from './components/TaskRemindersView';
@@ -61,7 +62,7 @@ export default function App() {
     );
 
     const missingRules = data.rules.filter(
-      (rule) => rule.active && isRuleScheduledForDate(rule, currentDate) && !existingRecordRuleIds.has(rule.id)
+      (rule) => rule.active && isRuleScheduledForDate(rule, currentDate, data.records) && !existingRecordRuleIds.has(rule.id)
     );
 
     if (missingRules.length > 0) {
@@ -95,8 +96,8 @@ export default function App() {
     }
   }, [currentDate, data?.rules]);
 
-  // Update a single record
-  const handleUpdateRecord = useCallback((updated: TaskRecord) => {
+  // Update a single record (supports auto-skipping remaining days in month if monthly limit reached)
+  const handleUpdateRecord = useCallback((updated: TaskRecord, skipRestOfMonth?: boolean) => {
     setData((prev) => {
       if (!prev) return prev;
       const index = prev.records.findIndex((r) => r.id === updated.id);
@@ -107,9 +108,28 @@ export default function App() {
       } else {
         newRecords = [...prev.records, updated];
       }
-      const nextData: AppDataBackup = { ...prev, records: newRecords };
-      saveDataToLocalStorage(nextData);
+      let nextData: AppDataBackup = { ...prev, records: newRecords };
+
+      const rule = prev.rules.find((r) => r.id === updated.ruleId);
+      const shouldSkipMonth =
+        skipRestOfMonth ||
+        (updated.status === 'done' && !!rule?.monthlyLimit && rule.monthlyLimit > 0);
+
+      if (shouldSkipMonth) {
+        nextData = skipFutureMonthlyLimitRecords(nextData, updated.ruleId, updated.date);
+      } else {
+        saveDataToLocalStorage(nextData);
+      }
+
       return nextData;
+    });
+  }, []);
+
+  // One-click skip rest of month
+  const handleSkipMonthRemaining = useCallback((ruleId: string, fromDate: string) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      return skipFutureMonthlyLimitRecords(prev, ruleId, fromDate);
     });
   }, []);
 
@@ -209,8 +229,8 @@ export default function App() {
         currentDate={currentDate}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* Main Content Area: dense padding on mobile for maximum viewport efficiency */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 sm:px-6 lg:px-8 py-2.5 sm:py-6">
         {hasData ? (
           <>
             {activeTab === 'tasks' && (
@@ -220,6 +240,7 @@ export default function App() {
                 onDateChange={setCurrentDate}
                 onUpdateRecord={handleUpdateRecord}
                 onBatchUpdateRecords={handleBatchUpdateRecords}
+                onSkipMonthRemaining={handleSkipMonthRemaining}
                 onNavigateToTab={(tab) => setActiveTab(tab as ActiveTab)}
               />
             )}

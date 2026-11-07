@@ -92,6 +92,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       currency: r.currency || 'CNY',
       priority: r.priority || '中',
       active: r.active !== false,
+      monthlyLimit: typeof r.monthlyLimit === 'number' && r.monthlyLimit > 0 ? r.monthlyLimit : undefined,
       path: r.path || '',
       notes: r.notes || '',
       createdAt: r.createdAt || new Date().toISOString(),
@@ -116,6 +117,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       path: rec.path || '',
       notes: rec.notes || '',
       priority: rec.priority || '中',
+      monthlyLimitReached: !!rec.monthlyLimitReached,
       createdAt: rec.createdAt,
     })),
     _savedAt: Date.now(),
@@ -275,11 +277,31 @@ export function analyzeTemplateOptimization(data: AppDataBackup): OptimizationDi
 }
 
 // Check if a rule is scheduled for a given date string (YYYY-MM-DD)
-// Strictly honors startDate and endDate
-export function isRuleScheduledForDate(rule: TaskRule, dateStr: string): boolean {
+// Strictly honors startDate, endDate, and monthlyLimit (e.g. once per natural month)
+export function isRuleScheduledForDate(
+  rule: TaskRule,
+  dateStr: string,
+  existingRecords?: TaskRecord[]
+): boolean {
   if (!rule.active) return false;
   if (rule.startDate && dateStr < rule.startDate) return false;
   if (rule.endDate && dateStr > rule.endDate) return false;
+
+  // Monthly limit check: e.g. "每周五触发但一个自然月只能做1次"
+  if (rule.monthlyLimit && rule.monthlyLimit > 0 && existingRecords) {
+    const monthPrefix = dateStr.slice(0, 7);
+    const doneInMonth = existingRecords.filter(
+      (r) => r.ruleId === rule.id && r.status === 'done' && r.date.startsWith(monthPrefix)
+    );
+    // If user already completed this rule on an earlier date of the same month
+    if (doneInMonth.length >= rule.monthlyLimit) {
+      // If there is already a done record on THIS exact date, keep it visible
+      const isDoneOnThisDate = doneInMonth.some((r) => r.date === dateStr);
+      if (!isDoneOnThisDate) {
+        return false; // Monthly cap reached! Do not schedule or remind subsequent dates in this month
+      }
+    }
+  }
 
   const date = new Date(`${dateStr}T12:00:00`);
   const dayOfWeek = date.getDay(); // 0 is Sunday
@@ -308,3 +330,39 @@ export function isRuleScheduledForDate(rule: TaskRule, dateStr: string): boolean
       return true;
   }
 }
+
+// Automatically skip or suppress subsequent pending records of a rule in the same natural month
+export function skipFutureMonthlyLimitRecords(
+  data: AppDataBackup,
+  ruleId: string,
+  completedDate: string
+): AppDataBackup {
+  const monthPrefix = completedDate.slice(0, 7);
+  let changed = false;
+
+  const newRecords = data.records.map((rec) => {
+    if (rec.ruleId === ruleId && rec.date.startsWith(monthPrefix) && rec.date > completedDate) {
+      if (rec.status === 'pending') {
+        changed = true;
+        return {
+          ...rec,
+          status: 'skipped' as const,
+          monthlyLimitReached: true,
+          feedback: rec.feedback ? `${rec.feedback} (当月已达1次上限)` : '当月已完成，免提醒',
+        };
+      }
+    }
+    return rec;
+  });
+
+  if (!changed) return data;
+
+  const updated: AppDataBackup = {
+    ...data,
+    records: newRecords,
+    _savedAt: Date.now(),
+  };
+  saveDataToLocalStorage(updated);
+  return updated;
+}
+

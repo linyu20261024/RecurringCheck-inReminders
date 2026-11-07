@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { TaskRecord, TaskRule } from '../types';
 import { evaluateFormula } from '../services/dataStorage';
-import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock } from 'lucide-react';
+import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, CalendarOff } from 'lucide-react';
 
 interface QuickCheckInModalProps {
   record: TaskRecord;
   rule?: TaskRule;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (updatedRecord: TaskRecord) => void;
+  onSave: (updatedRecord: TaskRecord, skipRestOfMonth?: boolean) => void;
 }
 
 export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
@@ -24,6 +24,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   const [formulaExpr, setFormulaExpr] = useState<string>(record.feedback || '');
   const [notes, setNotes] = useState<string>(record.notes || '');
   const [status, setStatus] = useState<TaskRecord['status']>(record.status || 'done');
+  const [skipRestOfMonth, setSkipRestOfMonth] = useState<boolean>(true);
 
   // Update input if record changes
   useEffect(() => {
@@ -31,6 +32,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
     setFormulaExpr(record.feedback || '');
     setNotes(record.notes || '');
     setStatus(record.status === 'pending' ? 'done' : record.status);
+    setSkipRestOfMonth(true);
   }, [record]);
 
   if (!isOpen) return null;
@@ -62,40 +64,49 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
       completedAt: status === 'done' ? (record.completedAt || now) : undefined,
       received: status === 'done' && num > 0,
     };
-    onSave(updated);
+    onSave(updated, rule?.monthlyLimit ? skipRestOfMonth : false);
     onClose();
   };
 
+  const isMonthlyLimitRule = !!rule?.monthlyLimit && rule.monthlyLimit > 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-xs p-0 sm:p-4">
+      <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-slate-200 animate-in slide-in-from-bottom sm:zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <div className="px-5 py-3.5 sm:py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/60">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/60">
                 {record.platform}
               </span>
               <span className="text-xs text-slate-400">·</span>
-              <span className="text-xs text-slate-500">{record.category}</span>
+              <span className="text-[11px] text-slate-500">{record.category}</span>
+              {isMonthlyLimitRule && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-50 text-amber-700 border border-amber-200/60">
+                  自然月限1次
+                </span>
+              )}
             </div>
-            <h3 className="text-base font-bold text-slate-800 mt-1">{record.name}</h3>
+            <h3 className="text-sm sm:text-base font-bold text-slate-800 mt-1">{record.name}</h3>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-5 space-y-4">
+        <div className="p-4 sm:p-5 space-y-3.5 overflow-y-auto flex-1">
           {/* Path guidance */}
           {(record.path || rule?.path) && (
-            <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/60 text-xs text-amber-900 flex items-start gap-2">
+            <div className="p-2 sm:p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/60 text-xs text-amber-900 flex items-start gap-1.5">
               <span className="font-semibold shrink-0 text-amber-700">App 路径:</span>
-              <span className="font-mono text-amber-800 break-all">{record.path || rule?.path}</span>
+              <span className="font-mono text-amber-800 break-all text-[11px] leading-relaxed">
+                {record.path || rule?.path}
+              </span>
             </div>
           )}
 
@@ -106,7 +117,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStatus('done')}
-                className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
                   status === 'done'
                     ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -118,7 +129,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStatus('skipped')}
-                className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
                   status === 'skipped'
                     ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -130,7 +141,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStatus('canceled')}
-                className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
                   status === 'canceled'
                     ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -191,6 +202,26 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                   className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
+
+              {/* Monthly Limit Feature: Option to auto-skip rest of month */}
+              {isMonthlyLimitRule && (
+                <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-xl">
+                  <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900">
+                    <input
+                      type="checkbox"
+                      checked={skipRestOfMonth}
+                      onChange={(e) => setSkipRestOfMonth(e.target.checked)}
+                      className="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div>
+                      <span className="font-semibold block">本月已完成，后续日期自动免提醒</span>
+                      <span className="text-[11px] text-amber-700 leading-tight block mt-0.5">
+                        该任务限制每个自然月完成 1 次。勾选后将自动跳过本月后续所有周期的待办提醒。
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
@@ -208,7 +239,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+        <div className="px-5 py-3 sm:py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5 shrink-0">
           <button
             type="button"
             onClick={onClose}

@@ -32,6 +32,7 @@ export interface TaskRule {
   currency: CurrencyType;
   priority: PriorityType;
   active: boolean;
+  monthlyLimit?: number; // 自然月内最多完成次数，例如 1 表示当月完成 1 次后，本月后续触发日自动不再提醒
   path?: string;      // App internal navigation path e.g. "赚现金->签到"
   notes?: string;
   createdAt?: string;
@@ -57,6 +58,7 @@ export interface TaskRecord {
   path?: string;
   notes?: string;
   priority?: PriorityType;
+  monthlyLimitReached?: boolean; // 当月已达完成次数上限，本月后续待办已标记/免提醒
   createdAt?: string;
 }
 
