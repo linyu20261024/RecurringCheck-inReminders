@@ -11,6 +11,7 @@ import {
   isRuleScheduledForDate,
   deleteRuleAndPendingRecords,
   skipFutureMonthlyLimitRecords,
+  getTodayString,
 } from './services/dataStorage';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { TaskRemindersView } from './components/TaskRemindersView';
@@ -29,7 +30,7 @@ export default function App() {
   const [data, setData] = useState<AppDataBackup | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('tasks');
-  const [currentDate, setCurrentDate] = useState<string>('2026-11-06');
+  const [currentDate, setCurrentDate] = useState<string>(() => getTodayString());
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
   const [isOptimizationOpen, setIsOptimizationOpen] = useState(false);
 
@@ -196,6 +197,7 @@ export default function App() {
   // Load new dataset
   const handleDataLoaded = useCallback((newData: AppDataBackup) => {
     setData(newData);
+    setCurrentDate(getTodayString());
   }, []);
 
   // Pending count for navbar badge

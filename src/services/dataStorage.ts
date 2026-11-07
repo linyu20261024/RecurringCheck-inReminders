@@ -78,7 +78,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       platform: r.platform || '其他',
       category: r.category || '签到',
       frequency: r.frequency || 'daily',
-      startDate: r.startDate || '2026-10-25',
+      startDate: r.startDate || getTodayString(),
       endDate: r.endDate && r.endDate.trim() ? r.endDate.trim() : undefined,
       time: r.time || '09:00',
       deadline: r.deadline || '23:59',
@@ -104,7 +104,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       name: rec.name || '',
       platform: rec.platform || '其他',
       category: rec.category || '签到',
-      date: rec.date || '2026-11-06',
+      date: rec.date || getTodayString(),
       plannedAt: rec.plannedAt,
       deadlineAt: rec.deadlineAt,
       expected: typeof rec.expected === 'number' ? rec.expected : 0,
@@ -180,6 +180,11 @@ export function formatDate(date: Date): string {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+// Get today's date formatted as YYYY-MM-DD dynamically from system clock
+export function getTodayString(): string {
+  return formatDate(new Date());
 }
 
 // Evaluate arithmetic string expression safely (e.g. "0.8*2" or "3+2*5")

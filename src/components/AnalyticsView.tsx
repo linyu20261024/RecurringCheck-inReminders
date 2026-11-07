@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { AppDataBackup } from '../types';
+import { getTodayString } from '../services/dataStorage';
 import {
   TrendingUp,
   Calendar,
@@ -23,6 +24,9 @@ interface AnalyticsViewProps {
 type TimeRange = 'all' | '30d' | '14d' | '7d';
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
+  // Dynamic today string (e.g. 2026-11-07)
+  const todayStr = useMemo(() => getTodayString(), []);
+
   // Filters for Accumulated Cash Yield
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedPlatform, setSelectedPlatform] = useState<string>('all');
@@ -111,8 +115,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
     // Overall completion rate = done / (done + pending + skipped) = done / totalScheduled
     const overallRate = totalScheduled > 0 ? Math.round((totalDone / totalScheduled) * 100) : 0;
 
-    // Due records (tasks scheduled up to today 2026-11-06)
-    const dueRecords = filteredRecords.filter((r) => r.date <= '2026-11-06');
+    // Due records (tasks scheduled up to today)
+    const dueRecords = filteredRecords.filter((r) => r.date <= todayStr);
     const dueDone = dueRecords.filter((r) => r.status === 'done').length;
     const dueRate = dueRecords.length > 0 ? Math.round((dueDone / dueRecords.length) * 100) : 0;
 
@@ -235,8 +239,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
         map[r.platform].skippedTasks += 1;
       }
 
-      // Check if task date is on or before today (2026-11-06)
-      if (r.date <= '2026-11-06') {
+      // Check if task date is on or before today
+      if (r.date <= todayStr) {
         map[r.platform].dueTotal += 1;
         if (r.status === 'done') {
           map[r.platform].dueDone += 1;

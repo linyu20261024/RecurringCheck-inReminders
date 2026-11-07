@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { TaskRecord, TaskRule, AppDataBackup } from '../types';
+import { getTodayString } from '../services/dataStorage';
 import { QuickCheckInModal } from './QuickCheckInModal';
 import {
   CheckCircle2,
@@ -48,6 +49,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   const [activeCheckInRecord, setActiveCheckInRecord] = useState<TaskRecord | null>(null);
   const [copiedPathId, setCopiedPathId] = useState<string | null>(null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
+
+  // Dynamic today string (e.g. 2026-11-07)
+  const todayStr = useMemo(() => getTodayString(), []);
 
   // Rule lookup map
   const rulesMap = useMemo(() => {
@@ -298,10 +302,10 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
               </button>
             </div>
 
-            {currentDate !== '2026-11-06' && (
+            {currentDate !== todayStr && (
               <button
                 type="button"
-                onClick={() => onDateChange('2026-11-06')}
+                onClick={() => onDateChange(todayStr)}
                 className="text-[11px] text-indigo-600 hover:text-indigo-700 font-semibold px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-100 shrink-0"
               >
                 回今日

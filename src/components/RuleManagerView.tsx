@@ -151,7 +151,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         platform: formPlatform.trim(),
         category: formCategory,
         frequency: formFrequency,
-        startDate: formStartDate || '2026-10-25',
+        startDate: formStartDate || editingRule.startDate || currentDate,
         endDate: cleanEndDate,
         monthlyLimit: parsedMonthlyLimit,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
