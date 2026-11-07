@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { AppDataBackup } from '../types';
-import { getTodayString } from '../services/dataStorage';
+import { getTodayString, addDays } from '../services/dataStorage';
 import {
   TrendingUp,
   Calendar,
@@ -173,17 +173,62 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       }
     });
 
-    let list = Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
+    // Anchor date: today (or latest date with done tasks if in future)
+    const datesWithActivity = Object.keys(map).filter((d) => (map[d].cny || 0) > 0 || (map[d].doneCount || 0) > 0);
+    const latestDoneDate = datesWithActivity.length > 0 ? datesWithActivity.sort().slice(-1)[0] : todayStr;
+    const anchorDate = latestDoneDate > todayStr ? latestDoneDate : todayStr;
 
-    // Only apply slice if month is 'all'
-    if (selectedMonth === 'all') {
-      if (timeRange === '7d') list = list.slice(-7);
-      else if (timeRange === '14d') list = list.slice(-14);
-      else if (timeRange === '30d') list = list.slice(-30);
+    // Generate continuous date sequence
+    const dateSequence: string[] = [];
+
+    if (timeRange === '7d') {
+      let curr = addDays(anchorDate, -6);
+      while (curr <= anchorDate) {
+        dateSequence.push(curr);
+        curr = addDays(curr, 1);
+      }
+    } else if (timeRange === '14d') {
+      let curr = addDays(anchorDate, -13);
+      while (curr <= anchorDate) {
+        dateSequence.push(curr);
+        curr = addDays(curr, 1);
+      }
+    } else if (timeRange === '30d') {
+      let curr = addDays(anchorDate, -29);
+      while (curr <= anchorDate) {
+        dateSequence.push(curr);
+        curr = addDays(curr, 1);
+      }
+    } else {
+      // 'all'
+      if (selectedMonth !== 'all') {
+        // Month selected: generate dates for that month
+        const [yearStr, monthStr] = selectedMonth.split('-');
+        const y = parseInt(yearStr, 10);
+        const m = parseInt(monthStr, 10);
+        const daysInMonth = new Date(y, m, 0).getDate();
+        const endDayOfMonth = `${selectedMonth}-${String(daysInMonth).padStart(2, '0')}`;
+        const monthEnd = anchorDate.startsWith(selectedMonth) && anchorDate < endDayOfMonth ? anchorDate : endDayOfMonth;
+        let curr = `${selectedMonth}-01`;
+        while (curr <= monthEnd) {
+          dateSequence.push(curr);
+          curr = addDays(curr, 1);
+        }
+      } else {
+        // Full period: from the earliest recorded date up to anchorDate
+        const recordedDates = Object.keys(map).filter((d) => d <= anchorDate).sort();
+        const earliestDate = recordedDates.length > 0 ? recordedDates[0] : addDays(anchorDate, -6);
+        let curr = earliestDate;
+        while (curr <= anchorDate) {
+          dateSequence.push(curr);
+          curr = addDays(curr, 1);
+        }
+      }
     }
 
     let cumulative = 0;
-    return list.map((item) => {
+    return dateSequence.map((d) => {
+      const item = map[d] || { date: d, cny: 0, doneCount: 0, platforms: {} };
       cumulative += item.cny;
       return {
         ...item,
@@ -191,7 +236,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
         cumulativeCny: Math.round(cumulative * 100) / 100,
       };
     });
-  }, [filteredRecords, selectedMonth, timeRange]);
+  }, [filteredRecords, selectedMonth, timeRange, todayStr]);
 
   // Platform ROI Ranking (CNY Cash Yield & Transparent Completion Rates)
   const platformRanking = useMemo(() => {
@@ -288,12 +333,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
 
   // Max value for chart scaling
   const maxDailyCny = useMemo(() => {
-    const max = Math.max(...dailyStats.map((d) => d.cny), 1);
-    return Math.ceil(max * 1.15);
+    const max = Math.max(...dailyStats.map((d) => d.cny), 0);
+    return max > 0 ? Math.ceil(max * 1.15) : 10;
   }, [dailyStats]);
 
   const maxCumulativeCny = useMemo(() => {
-    return Math.max(...dailyStats.map((d) => d.cumulativeCny), 1);
+    const max = Math.max(...dailyStats.map((d) => d.cumulativeCny), 0);
+    return max > 0 ? Math.ceil(max * 1.08) : 10;
+  }, [dailyStats]);
+
+  const rangeLabel = useMemo(() => {
+    if (dailyStats.length === 0) return '';
+    const start = dailyStats[0].date;
+    const end = dailyStats[dailyStats.length - 1].date;
+    return `${start} ~ ${end}`;
   }, [dailyStats]);
 
   // Reset filters
@@ -523,47 +576,65 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                 {selectedMonth !== 'all' && `（${selectedMonth.replace('-', '年')}月）`}
               </h3>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              柱状图为每日实际现金入账 (¥)，折线为累计现金递增曲线
+            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>柱状图为每日实际现金入账 (¥)，折线为累计现金递增曲线</span>
+              {rangeLabel && (
+                <span className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md text-[11px] font-medium border border-indigo-100">
+                  {timeRange === '7d' ? '近7天: ' : timeRange === '14d' ? '近14天: ' : timeRange === '30d' ? '近30天: ' : '全周期: '}
+                  {rangeLabel}
+                </span>
+              )}
             </p>
           </div>
 
-          {selectedMonth === 'all' && (
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-medium">
-              <button
-                onClick={() => setTimeRange('7d')}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
-                  timeRange === '7d' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-800'
-                }`}
-              >
-                近7天
-              </button>
-              <button
-                onClick={() => setTimeRange('14d')}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
-                  timeRange === '14d' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-800'
-                }`}
-              >
-                近14天
-              </button>
-              <button
-                onClick={() => setTimeRange('30d')}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
-                  timeRange === '30d' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-800'
-                }`}
-              >
-                近30天
-              </button>
-              <button
-                onClick={() => setTimeRange('all')}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
-                  timeRange === 'all' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-800'
-                }`}
-              >
-                全周期
-              </button>
-            </div>
-          )}
+          {/* Time range selector buttons - ALWAYS visible and interactive */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-medium shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setTimeRange('7d');
+                if (selectedMonth !== 'all') setSelectedMonth('all');
+              }}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                timeRange === '7d' ? 'bg-white text-indigo-700 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              近7天
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTimeRange('14d');
+                if (selectedMonth !== 'all') setSelectedMonth('all');
+              }}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                timeRange === '14d' ? 'bg-white text-indigo-700 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              近14天
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTimeRange('30d');
+                if (selectedMonth !== 'all') setSelectedMonth('all');
+              }}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                timeRange === '30d' ? 'bg-white text-indigo-700 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              近30天
+            </button>
+            <button
+              type="button"
+              onClick={() => setTimeRange('all')}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                timeRange === 'all' ? 'bg-white text-indigo-700 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              全周期
+            </button>
+          </div>
         </div>
 
         {/* SVG Chart */}
@@ -574,29 +645,33 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                 当前筛选条件下无现金收益记录
               </div>
             ) : (
-              <svg className="w-full h-full overflow-visible" preserveAspectRatio="none">
+              <svg className="w-full h-full overflow-visible" viewBox="0 0 800 230">
                 <defs>
                   <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.85" />
-                    <stop offset="100%" stopColor="#6366f1" stopOpacity="0.35" />
+                    <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.9" />
+                    <stop offset="100%" stopColor="#818cf8" stopOpacity="0.35" />
+                  </linearGradient>
+                  <linearGradient id="barHoverGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3730a3" stopOpacity="1" />
+                    <stop offset="100%" stopColor="#4f46e5" stopOpacity="0.8" />
                   </linearGradient>
                 </defs>
 
                 {/* Horizontal reference grid lines */}
                 {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
-                  const y = 220 - pct * 180;
+                  const y = 180 - pct * 150;
                   const val = (maxDailyCny * pct).toFixed(1);
                   return (
                     <g key={i}>
                       <line
-                        x1="30"
+                        x1="45"
                         y1={y}
-                        x2="100%"
+                        x2="780"
                         y2={y}
                         stroke="#f1f5f9"
                         strokeDasharray={pct === 0 ? undefined : '3,3'}
                       />
-                      <text x="24" y={y + 3} textAnchor="end" fontSize="10" fill="#94a3b8" fontFamily="monospace">
+                      <text x="40" y={y + 3} textAnchor="end" fontSize="10" fill="#94a3b8" fontFamily="monospace">
                         ¥{val}
                       </text>
                     </g>
@@ -606,11 +681,18 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                 {/* Bars for Daily Yield */}
                 {dailyStats.map((d, index) => {
                   const totalBars = dailyStats.length;
-                  const barWidthPct = Math.max(1.2, Math.min(4.5, 80 / totalBars));
-                  const leftPct = 6 + (index / (totalBars - 1 || 1)) * 88;
-                  const height = maxDailyCny > 0 ? (d.cny / maxDailyCny) * 180 : 0;
-                  const y = 220 - height;
+                  const x = 50 + (totalBars === 1 ? 365 : (index / (totalBars - 1)) * 730);
+                  const barWidth = Math.min(36, Math.max(6, (730 / totalBars) * 0.65));
+                  const height = maxDailyCny > 0 ? (d.cny / maxDailyCny) * 150 : 0;
+                  const y = 180 - height;
                   const isHovered = hoveredBarIndex === index;
+
+                  // Determine label frequency
+                  let showLabel = false;
+                  if (totalBars <= 7) showLabel = true;
+                  else if (totalBars <= 14) showLabel = index % 2 === 0 || index === totalBars - 1;
+                  else if (totalBars <= 30) showLabel = index % 5 === 0 || index === totalBars - 1;
+                  else showLabel = index === 0 || index === Math.floor(totalBars / 2) || index === totalBars - 1;
 
                   return (
                     <g
@@ -619,45 +701,75 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                       onMouseLeave={() => setHoveredBarIndex(null)}
                       className="cursor-pointer"
                     >
+                      {/* Transparent column hit area for smooth hovering */}
                       <rect
-                        x={`${leftPct - barWidthPct / 2}%`}
-                        y={y}
-                        width={`${barWidthPct}%`}
-                        height={Math.max(height, 2)}
+                        x={x - (730 / totalBars) / 2}
+                        y={20}
+                        width={730 / totalBars}
+                        height={185}
+                        fill="transparent"
+                      />
+
+                      {/* Visible bar */}
+                      <rect
+                        x={x - barWidth / 2}
+                        y={d.cny > 0 ? y : 178}
+                        width={barWidth}
+                        height={d.cny > 0 ? Math.max(height, 3) : 2}
                         rx="3"
-                        fill={isHovered ? '#4338ca' : 'url(#barGrad)'}
+                        fill={isHovered ? 'url(#barHoverGrad)' : d.cny > 0 ? 'url(#barGrad)' : '#cbd5e1'}
                         className="transition-colors duration-150"
                       />
+
+                      {/* Date label */}
+                      {showLabel && (
+                        <text
+                          x={x}
+                          y={202}
+                          textAnchor="middle"
+                          fontSize="9.5"
+                          fill={isHovered ? '#4338ca' : '#94a3b8'}
+                          fontWeight={isHovered ? 'bold' : 'normal'}
+                          fontFamily="monospace"
+                        >
+                          {d.date.slice(5)}
+                        </text>
+                      )}
                     </g>
                   );
                 })}
 
-                {/* Cumulative Line */}
-                <path
-                  d={dailyStats.reduce((acc, d, index) => {
-                    const totalPoints = dailyStats.length;
-                    const xPct = 6 + (index / (totalPoints - 1 || 1)) * 88;
-                    const y = 220 - (d.cumulativeCny / maxCumulativeCny) * 180;
-                    return `${acc} ${index === 0 ? 'M' : 'L'} ${xPct}% ${y}`;
-                  }, '')}
-                  fill="none"
-                  stroke="#10b981"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                />
+                {/* Cumulative Line (pure numeric coordinates, valid SVG) */}
+                {dailyStats.length > 1 && (
+                  <path
+                    d={dailyStats
+                      .map((d, index) => {
+                        const totalPoints = dailyStats.length;
+                        const x = 50 + (index / (totalPoints - 1)) * 730;
+                        const y = 180 - (maxCumulativeCny > 0 ? (d.cumulativeCny / maxCumulativeCny) * 150 : 0);
+                        return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+                      })
+                      .join(' ')}
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
 
                 {/* Points on Line */}
                 {dailyStats.map((d, index) => {
                   const totalPoints = dailyStats.length;
-                  const xPct = 6 + (index / (totalPoints - 1 || 1)) * 88;
-                  const y = 220 - (d.cumulativeCny / maxCumulativeCny) * 180;
+                  const x = 50 + (totalPoints === 1 ? 365 : (index / (totalPoints - 1)) * 730);
+                  const y = 180 - (maxCumulativeCny > 0 ? (d.cumulativeCny / maxCumulativeCny) * 150 : 0);
                   const isHovered = hoveredBarIndex === index;
                   return (
                     <circle
                       key={`pt-${d.date}`}
-                      cx={`${xPct}%`}
+                      cx={x}
                       cy={y}
-                      r={isHovered ? '5' : '3'}
+                      r={isHovered ? 5.5 : totalPoints > 20 ? 2.5 : 3.5}
                       fill="#10b981"
                       stroke="#ffffff"
                       strokeWidth="2"
@@ -672,7 +784,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
               <div
                 className="absolute z-20 pointer-events-none bg-slate-900 text-white rounded-xl shadow-lg p-3 text-xs -top-2 transform -translate-x-1/2 border border-slate-700 animate-in fade-in zoom-in-95"
                 style={{
-                  left: `${6 + (hoveredBarIndex / (dailyStats.length - 1 || 1)) * 88}%`,
+                  left: `${(
+                    (50 +
+                      (dailyStats.length === 1
+                        ? 365
+                        : (hoveredBarIndex / (dailyStats.length - 1)) * 730)) /
+                    800
+                  ) * 100}%`,
                 }}
               >
                 <div className="font-bold text-slate-200 border-b border-slate-700 pb-1 mb-1.5 flex items-center justify-between gap-4">
@@ -697,13 +815,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Date Axis Labels */}
-          <div className="flex justify-between text-[11px] text-slate-400 font-mono px-6 pt-2 border-t border-slate-100">
-            <span>{dailyStats[0]?.date || ''}</span>
-            <span>{dailyStats[Math.floor(dailyStats.length / 2)]?.date || ''}</span>
-            <span>{dailyStats[dailyStats.length - 1]?.date || ''}</span>
           </div>
 
           {/* Legend */}

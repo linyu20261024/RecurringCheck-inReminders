@@ -187,6 +187,13 @@ export function getTodayString(): string {
   return formatDate(new Date());
 }
 
+// Add or subtract days from a YYYY-MM-DD date string
+export function addDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return formatDate(d);
+}
+
 // Evaluate arithmetic string expression safely (e.g. "0.8*2" or "3+2*5")
 export function evaluateFormula(expr: string): number | null {
   if (!expr || typeof expr !== 'string') return null;
