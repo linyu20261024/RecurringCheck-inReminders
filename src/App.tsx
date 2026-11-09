@@ -11,6 +11,7 @@ import {
   isRuleScheduledForDate,
   deleteRuleAndPendingRecords,
   skipFutureMonthlyLimitRecords,
+  syncRuleToPendingRecords,
   getTodayString,
 } from './services/dataStorage';
 import { Navbar, ActiveTab } from './components/Navbar';
@@ -74,6 +75,9 @@ export default function App() {
         platform: r.platform,
         category: r.category,
         date: currentDate,
+        time: r.time || '09:00',
+        deadline: r.deadline || '23:59',
+        timeSensitive: !!r.timeSensitive,
         expected: r.amount || 0,
         currency: r.currency,
         status: 'pending',
@@ -161,27 +165,12 @@ export default function App() {
     });
   }, []);
 
+  // Update rule: automatically updates all unexecuted (pending) tasks of this rule!
   const handleUpdateRule = useCallback((updatedRule: TaskRule) => {
     setData((prev) => {
       if (!prev) return prev;
-      // If updatedRule has an endDate, automatically prune any pending records beyond that endDate
-      let newRecords = prev.records;
-      if (updatedRule.endDate) {
-        newRecords = newRecords.filter((rec) => {
-          if (rec.ruleId === updatedRule.id && rec.status === 'pending' && rec.date > updatedRule.endDate!) {
-            return false;
-          }
-          return true;
-        });
-      }
-
-      const nextData: AppDataBackup = {
-        ...prev,
-        rules: prev.rules.map((r) => (r.id === updatedRule.id ? updatedRule : r)),
-        records: newRecords,
-      };
-      saveDataToLocalStorage(nextData);
-      return nextData;
+      const { updatedData } = syncRuleToPendingRecords(prev, updatedRule);
+      return updatedData;
     });
   }, []);
 

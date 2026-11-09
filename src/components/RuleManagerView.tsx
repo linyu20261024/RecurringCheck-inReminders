@@ -56,6 +56,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
   const [formAmount, setFormAmount] = useState('0');
   const [formCurrency, setFormCurrency] = useState<CurrencyType>('CNY');
   const [formPriority, setFormPriority] = useState<PriorityType>('中');
+  const [formTime, setFormTime] = useState('09:00');
+  const [formDeadline, setFormDeadline] = useState('23:59');
+  const [formTimeSensitive, setFormTimeSensitive] = useState(false);
   const [formPath, setFormPath] = useState('');
   const [formNotes, setFormNotes] = useState('');
 
@@ -105,6 +108,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormAmount('0');
     setFormCurrency('CNY');
     setFormPriority('中');
+    setFormTime('09:00');
+    setFormDeadline('23:59');
+    setFormTimeSensitive(false);
     setFormPath('');
     setFormNotes('');
     setIsModalOpen(true);
@@ -126,6 +132,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormAmount(String(rule.amount ?? 0));
     setFormCurrency(rule.currency);
     setFormPriority(rule.priority);
+    setFormTime(rule.time || '09:00');
+    setFormDeadline(rule.deadline || '23:59');
+    setFormTimeSensitive(!!rule.timeSensitive);
     setFormPath(rule.path || '');
     setFormNotes(rule.notes || '');
     setIsModalOpen(true);
@@ -143,6 +152,8 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     const now = new Date().toISOString();
     const cleanEndDate = hasEndDate && formEndDate.trim() ? formEndDate.trim() : undefined;
     const parsedMonthlyLimit = hasMonthlyLimit ? Math.max(1, parseInt(formMonthlyLimit, 10) || 1) : undefined;
+    const cleanTime = formTime.trim() || '09:00';
+    const cleanDeadline = formDeadline.trim() || '23:59';
 
     if (editingRule) {
       const updated: TaskRule = {
@@ -153,6 +164,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         frequency: formFrequency,
         startDate: formStartDate || editingRule.startDate || currentDate,
         endDate: cleanEndDate,
+        time: cleanTime,
+        deadline: cleanDeadline,
+        timeSensitive: formTimeSensitive,
         monthlyLimit: parsedMonthlyLimit,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
         monthdays: formFrequency === 'monthly' ? parsedMonthDays : [],
@@ -173,6 +187,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         frequency: formFrequency,
         startDate: formStartDate || currentDate,
         endDate: cleanEndDate,
+        time: cleanTime,
+        deadline: cleanDeadline,
+        timeSensitive: formTimeSensitive,
         monthlyLimit: parsedMonthlyLimit,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
         monthdays: formFrequency === 'monthly' ? parsedMonthDays : [],
@@ -333,6 +350,11 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                           {r.platform}
                         </span>
                         <h4 className="text-xs font-bold text-slate-900 truncate">{r.name}</h4>
+                        {r.timeSensitive && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-50 text-rose-600 border border-rose-200">
+                            ⏰ 时间敏感
+                          </span>
+                        )}
                         {r.priority === '高' && (
                           <span className="text-[10px] font-bold px-1 py-0.2 rounded bg-rose-50 text-rose-600 border border-rose-200/50">
                             高
@@ -345,8 +367,13 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                         )}
                       </div>
 
-                      {/* Schedule info */}
-                      <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
+                      {/* Schedule & Time info */}
+                      <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2 flex-wrap font-mono">
+                        <span className="flex items-center gap-1 text-slate-700 font-medium">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          {r.time || '09:00'}{r.deadline && r.deadline !== '23:59' ? `~${r.deadline}` : ''}
+                        </span>
+                        <span className="text-slate-300">·</span>
                         <span>
                           {r.frequency === 'daily' && '每日'}
                           {r.frequency === 'weekly' &&
@@ -455,6 +482,11 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
                           <span>{r.name}</span>
+                          {r.timeSensitive && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200">
+                              ⏰ 时间敏感
+                            </span>
+                          )}
                           {r.monthlyLimit && (
                             <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                               月限{r.monthlyLimit}次
@@ -469,12 +501,18 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                         </div>
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-600">
-                        {r.frequency === 'daily' && '每日'}
-                        {r.frequency === 'weekly' &&
-                          `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
-                        {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
-                        {r.frequency === 'solar' && '24节气活动'}
-                        {r.frequency === 'once' && '单次'}
+                        <div className="flex items-center gap-1 text-slate-800 font-semibold">
+                          <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>{r.time || '09:00'}{r.deadline && r.deadline !== '23:59' ? `~${r.deadline}` : ''}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          {r.frequency === 'daily' && '每日'}
+                          {r.frequency === 'weekly' &&
+                            `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
+                          {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
+                          {r.frequency === 'solar' && '24节气活动'}
+                          {r.frequency === 'once' && '单次'}
+                        </div>
                       </td>
                       <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
                         <span>{r.startDate || '不限'}</span>
@@ -709,6 +747,83 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                     <option value="中">中等</option>
                     <option value="低">低</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Scheduled Time & Time-Sensitivity Requirement */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                    预设提醒时间与时效要求
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-rose-900 font-bold cursor-pointer bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-200">
+                    <input
+                      type="checkbox"
+                      checked={formTimeSensitive}
+                      onChange={(e) => setFormTimeSensitive(e.target.checked)}
+                      className="rounded border-rose-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                    />
+                    <span>⏰ 时间敏感任务（置顶优先提醒）</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+                  <div>
+                    <span className="block text-[11px] font-medium text-slate-600 mb-1">
+                      执行时间点 (默认 09:00)
+                    </span>
+                    <input
+                      type="time"
+                      value={formTime}
+                      onChange={(e) => setFormTime(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-hidden bg-white mb-1.5"
+                    />
+                    <div className="flex gap-1 flex-wrap">
+                      {['08:00', '09:00', '10:00', '12:00', '15:00', '20:00'].map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setFormTime(t)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                            formTime === t
+                              ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="block text-[11px] font-medium text-slate-600 mb-1">
+                      当日截止点 (默认 23:59)
+                    </span>
+                    <input
+                      type="time"
+                      value={formDeadline}
+                      onChange={(e) => setFormDeadline(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-hidden bg-white mb-1.5"
+                    />
+                    <div className="flex gap-1 flex-wrap">
+                      {['12:00', '15:00', '19:00', '21:00', '23:59'].map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setFormDeadline(t)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                            formDeadline === t
+                              ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 

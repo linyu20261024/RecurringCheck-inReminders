@@ -32,6 +32,7 @@ export interface TaskRule {
   currency: CurrencyType;
   priority: PriorityType;
   active: boolean;
+  timeSensitive?: boolean; // 是否时间敏感（如特定时间点抢券/限时活动，列表将优先置顶提醒）
   monthlyLimit?: number; // 自然月内最多完成次数，例如 1 表示当月完成 1 次后，本月后续触发日自动不再提醒
   path?: string;      // App internal navigation path e.g. "赚现金->签到"
   notes?: string;
@@ -46,6 +47,9 @@ export interface TaskRecord {
   platform: string;
   category: string;
   date: string;       // YYYY-MM-DD
+  time?: string;      // HH:mm 预设执行时间 (如 08:00, 10:00)
+  deadline?: string;  // HH:mm 截止时间 (如 23:59)
+  timeSensitive?: boolean; // 是否时间敏感任务
   plannedAt?: string;
   deadlineAt?: string;
   expected?: number;

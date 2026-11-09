@@ -32,7 +32,8 @@ interface TaskRemindersViewProps {
 }
 
 type ViewMode = 'platform' | 'category' | 'flat';
-type StatusFilter = 'all' | 'pending' | 'done' | 'skipped';
+type StatusFilter = 'all' | 'pending' | 'timeSensitive' | 'done' | 'skipped';
+type SortMode = 'time' | 'default';
 
 export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   data,
@@ -49,6 +50,10 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   const [activeCheckInRecord, setActiveCheckInRecord] = useState<TaskRecord | null>(null);
   const [copiedPathId, setCopiedPathId] = useState<string | null>(null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
+
+  // Time-sensitive & Time-based sorting controls
+  const [timeSensitiveFirst, setTimeSensitiveFirst] = useState<boolean>(true);
+  const [sortByTime, setSortByTime] = useState<boolean>(true);
 
   // Dynamic today string (e.g. 2026-11-07)
   const todayStr = useMemo(() => getTodayString(), []);
@@ -79,13 +84,61 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     return data.records.filter((r) => r.date === currentDate);
   }, [data.records, currentDate]);
 
+  // Helper to determine if a record is time-sensitive (checks record or fallback to rule)
+  const isRecordTimeSensitive = (rec: TaskRecord): boolean => {
+    if (rec.timeSensitive !== undefined) return rec.timeSensitive;
+    const rule = rulesMap.get(rec.ruleId);
+    return !!rule?.timeSensitive;
+  };
+
+  // Helper to get effective scheduled time string (e.g. "08:00")
+  const getRecordTime = (rec: TaskRecord): string => {
+    if (rec.time) return rec.time;
+    const rule = rulesMap.get(rec.ruleId);
+    return rule?.time || '09:00';
+  };
+
+  // Record sorting comparator:
+  // 1. Pending tasks first (if status is different, pending precedes done/skipped)
+  // 2. If timeSensitiveFirst is on, time-sensitive tasks come before regular tasks
+  // 3. If sortByTime is on, sort chronologically by time string (e.g. "08:00" < "10:00")
+  // 4. Fallback to name
+  const sortRecords = (list: TaskRecord[]): TaskRecord[] => {
+    return [...list].sort((a, b) => {
+      // 1. Pending priority: pending tasks should always be attended to before done
+      const aPending = a.status === 'pending' ? 1 : 0;
+      const bPending = b.status === 'pending' ? 1 : 0;
+      if (aPending !== bPending) return bPending - aPending;
+
+      // 2. Time-sensitive priority (if enabled)
+      if (timeSensitiveFirst) {
+        const aTs = isRecordTimeSensitive(a) ? 1 : 0;
+        const bTs = isRecordTimeSensitive(b) ? 1 : 0;
+        if (aTs !== bTs) return bTs - aTs;
+      }
+
+      // 3. Time chronological ordering (if enabled)
+      if (sortByTime) {
+        const timeA = getRecordTime(a);
+        const timeB = getRecordTime(b);
+        if (timeA !== timeB) return timeA.localeCompare(timeB);
+      }
+
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
+  };
+
   // Filtered records
   const filteredRecords = useMemo(() => {
-    return todayRecords.filter((rec) => {
+    const list = todayRecords.filter((rec) => {
       // Status filter
       if (statusFilter === 'pending' && rec.status !== 'pending') return false;
       if (statusFilter === 'done' && rec.status !== 'done') return false;
       if (statusFilter === 'skipped' && rec.status !== 'skipped' && rec.status !== 'canceled') return false;
+      if (statusFilter === 'timeSensitive') {
+        const ts = isRecordTimeSensitive(rec);
+        if (!ts) return false;
+      }
 
       // Platform filter
       if (selectedPlatform !== 'all' && rec.platform !== selectedPlatform) return false;
@@ -103,7 +156,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
 
       return true;
     });
-  }, [todayRecords, statusFilter, selectedPlatform, searchQuery, rulesMap]);
+
+    return sortRecords(list);
+  }, [todayRecords, statusFilter, selectedPlatform, searchQuery, rulesMap, timeSensitiveFirst, sortByTime]);
 
   // All distinct platforms for current date
   const platformsList = useMemo(() => {
@@ -118,6 +173,8 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     const done = todayRecords.filter((r) => r.status === 'done').length;
     const pending = todayRecords.filter((r) => r.status === 'pending').length;
     const skipped = todayRecords.filter((r) => r.status === 'skipped' || r.status === 'canceled').length;
+    const timeSensitiveCount = todayRecords.filter((r) => isRecordTimeSensitive(r)).length;
+    const timeSensitivePending = todayRecords.filter((r) => isRecordTimeSensitive(r) && r.status === 'pending').length;
 
     let actualCny = 0;
     let expectedCny = 0;
@@ -136,11 +193,13 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
       done,
       pending,
       skipped,
+      timeSensitiveCount,
+      timeSensitivePending,
       actualCny: Math.round(actualCny * 100) / 100,
       expectedCny: Math.round(expectedCny * 100) / 100,
       completionRate,
     };
-  }, [todayRecords]);
+  }, [todayRecords, rulesMap]);
 
   // Grouping by Platform
   const recordsByPlatform = useMemo(() => {
@@ -149,14 +208,28 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
       if (!groups[r.platform]) groups[r.platform] = [];
       groups[r.platform].push(r);
     });
-    // Sort platforms by pending items first, then total count
+
+    // Ensure items within each platform follow sortRecords order
+    Object.keys(groups).forEach((key) => {
+      groups[key] = sortRecords(groups[key]);
+    });
+
+    // Sort platforms:
+    // 1. Platforms with pending time-sensitive tasks come first
+    // 2. Platforms with higher pending count
+    // 3. Total count
     return Object.entries(groups).sort((a, b) => {
+      const tsPendingA = a[1].filter((r) => r.status === 'pending' && isRecordTimeSensitive(r)).length;
+      const tsPendingB = b[1].filter((r) => r.status === 'pending' && isRecordTimeSensitive(r)).length;
+      if (tsPendingA !== tsPendingB) return tsPendingB - tsPendingA;
+
       const pendingA = a[1].filter((r) => r.status === 'pending').length;
       const pendingB = b[1].filter((r) => r.status === 'pending').length;
       if (pendingA !== pendingB) return pendingB - pendingA;
+
       return b[1].length - a[1].length;
     });
-  }, [filteredRecords]);
+  }, [filteredRecords, timeSensitiveFirst, sortByTime, rulesMap]);
 
   // Grouping by Category
   const recordsByCategory = useMemo(() => {
@@ -165,8 +238,13 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
       if (!groups[r.category]) groups[r.category] = [];
       groups[r.category].push(r);
     });
+
+    Object.keys(groups).forEach((key) => {
+      groups[key] = sortRecords(groups[key]);
+    });
+
     return Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
-  }, [filteredRecords]);
+  }, [filteredRecords, timeSensitiveFirst, sortByTime, rulesMap]);
 
   // Quick 1-click single check-in toggle
   const handleQuickToggleDone = (record: TaskRecord) => {
@@ -361,6 +439,20 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
               <Circle className="w-2.5 h-2.5 fill-current" />
               待办 ({metrics.pending})
             </button>
+            {metrics.timeSensitiveCount > 0 && (
+              <button
+                onClick={() => setStatusFilter('timeSensitive')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1 ${
+                  statusFilter === 'timeSensitive'
+                    ? 'bg-rose-600 text-white shadow-2xs ring-2 ring-rose-200'
+                    : 'text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/70'
+                }`}
+                title="只看时间敏感/限时抢券等时效任务"
+              >
+                <Clock className="w-3 h-3" />
+                时间敏感 ({metrics.timeSensitivePending}/{metrics.timeSensitiveCount})
+              </button>
+            )}
             <button
               onClick={() => setStatusFilter('done')}
               className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1 ${
@@ -384,10 +476,36 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
             </button>
           </div>
 
-          {/* Search & Platform Filter & View Modes */}
-          <div className="flex items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-end">
+          {/* Search & Platform Filter & Sort Controls & View Modes */}
+          <div className="flex items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-end flex-wrap sm:flex-nowrap">
+            {/* Quick Sort Toggles */}
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/80 shrink-0">
+              <button
+                type="button"
+                onClick={() => setTimeSensitiveFirst((prev) => !prev)}
+                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors flex items-center gap-1 ${
+                  timeSensitiveFirst ? 'bg-rose-100 text-rose-800 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="开启后将时间敏感活动优先置顶展示"
+              >
+                <span>⏰ 敏感优先</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${timeSensitiveFirst ? 'bg-rose-600' : 'bg-slate-300'}`} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortByTime((prev) => !prev)}
+                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors flex items-center gap-1 ${
+                  sortByTime ? 'bg-indigo-100 text-indigo-800 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="开启后按照预设时间（08:00 -> 10:00 -> 12:00 等）顺序排列"
+              >
+                <span>按时间排序</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${sortByTime ? 'bg-indigo-600' : 'bg-slate-300'}`} />
+              </button>
+            </div>
+
             {/* Search */}
-            <div className="relative flex-1 sm:w-44">
+            <div className="relative flex-1 sm:w-36">
               <Search className="w-3 h-3 absolute left-2.5 top-2 text-slate-400" />
               <input
                 type="text"
@@ -631,6 +749,38 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                   {rec.category}
                                 </span>
 
+                                {/* Scheduled Time Badge */}
+                                {(rec.time || rule?.time) && (
+                                  <span
+                                    className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded-md border flex items-center gap-0.5 ${
+                                      isRecordTimeSensitive(rec)
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200/80 font-bold'
+                                        : 'bg-slate-50 text-slate-600 border-slate-200/60'
+                                    }`}
+                                    title={`预设时间: ${rec.time || rule?.time || '09:00'}${
+                                      (rec.deadline || rule?.deadline) && (rec.deadline || rule?.deadline) !== '23:59'
+                                        ? ` ~ ${rec.deadline || rule?.deadline}`
+                                        : ''
+                                    }`}
+                                  >
+                                    <Clock className="w-2.5 h-2.5 shrink-0" />
+                                    <span>{rec.time || rule?.time || '09:00'}</span>
+                                    {(rec.deadline || rule?.deadline) && (rec.deadline || rule?.deadline) !== '23:59' && (
+                                      <span className="opacity-75">~{rec.deadline || rule?.deadline}</span>
+                                    )}
+                                  </span>
+                                )}
+
+                                {/* Time Sensitive Tag */}
+                                {isRecordTimeSensitive(rec) && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-rose-500 text-white shadow-2xs animate-pulse"
+                                    title="时效敏感任务：限时秒杀/抢券/固定时间窗口，请优先办理！"
+                                  >
+                                    ⏰ 限时敏感
+                                  </span>
+                                )}
+
                                 {rec.priority === '高' && (
                                   <span className="text-[10px] font-bold px-1 py-0.2 rounded bg-rose-50 text-rose-600 border border-rose-200/50">
                                     高
@@ -787,6 +937,26 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                               >
                                 {rec.name}
                               </span>
+
+                              {(rec.time || rule?.time) && (
+                                <span
+                                  className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded-md border flex items-center gap-0.5 ${
+                                    isRecordTimeSensitive(rec)
+                                      ? 'bg-rose-50 text-rose-700 border-rose-200/80 font-bold'
+                                      : 'bg-slate-50 text-slate-600 border-slate-200/60'
+                                  }`}
+                                >
+                                  <Clock className="w-2.5 h-2.5 shrink-0" />
+                                  <span>{rec.time || rule?.time || '09:00'}</span>
+                                </span>
+                              )}
+
+                              {isRecordTimeSensitive(rec) && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-rose-500 text-white shadow-2xs">
+                                  ⏰ 限时敏感
+                                </span>
+                              )}
+
                               {rule?.monthlyLimit && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                                   月限1次
@@ -865,6 +1035,26 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                       >
                         {rec.name}
                       </span>
+
+                      {(rec.time || rule?.time) && (
+                        <span
+                          className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded-md border flex items-center gap-0.5 ${
+                            isRecordTimeSensitive(rec)
+                              ? 'bg-rose-50 text-rose-700 border-rose-200/80 font-bold'
+                              : 'bg-slate-50 text-slate-600 border-slate-200/60'
+                          }`}
+                        >
+                          <Clock className="w-2.5 h-2.5 shrink-0" />
+                          <span>{rec.time || rule?.time || '09:00'}</span>
+                        </span>
+                      )}
+
+                      {isRecordTimeSensitive(rec) && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-rose-500 text-white shadow-2xs">
+                          ⏰ 限时敏感
+                        </span>
+                      )}
+
                       {rule?.monthlyLimit && (
                         <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                           月限1次

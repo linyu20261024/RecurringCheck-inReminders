@@ -67,12 +67,18 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
   }
 
   const obj = raw as Record<string, unknown>;
-  const rules = Array.isArray(obj.rules) ? (obj.rules as TaskRule[]) : [];
-  const records = Array.isArray(obj.records) ? (obj.records as TaskRecord[]) : [];
+  const rawRules = Array.isArray(obj.rules) ? (obj.rules as TaskRule[]) : [];
+  const rawRecords = Array.isArray(obj.records) ? (obj.records as TaskRecord[]) : [];
 
-  return {
-    version: typeof obj.version === 'number' ? obj.version : 2,
-    rules: rules.map((r, i) => ({
+  const rules: TaskRule[] = rawRules.map((r, i) => {
+    const isTimeSensitive =
+      r.timeSensitive !== undefined
+        ? !!r.timeSensitive
+        : (r.time && r.time !== '00:00' && r.time !== '09:00') ||
+          (r.deadline && r.deadline !== '23:59') ||
+          /券|抢|秒杀|限时|早鸟|消费季|五折|一元购/.test(r.name || '');
+
+    return {
       id: r.id || `rule_${Date.now()}_${i}`,
       name: r.name || '未命名任务',
       platform: r.platform || '其他',
@@ -82,6 +88,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       endDate: r.endDate && r.endDate.trim() ? r.endDate.trim() : undefined,
       time: r.time || '09:00',
       deadline: r.deadline || '23:59',
+      timeSensitive: isTimeSensitive,
       weekdays: Array.isArray(r.weekdays) ? r.weekdays : [],
       monthdays: Array.isArray(r.monthdays) ? r.monthdays : [],
       solarTerms: Array.isArray(r.solarTerms) ? r.solarTerms : [],
@@ -97,31 +104,127 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       notes: r.notes || '',
       createdAt: r.createdAt || new Date().toISOString(),
       updatedAt: r.updatedAt || new Date().toISOString(),
-    })),
-    records: records.map((rec, i) => ({
+    };
+  });
+
+  const ruleMap = new Map<string, TaskRule>();
+  rules.forEach((r) => ruleMap.set(r.id, r));
+
+  const records: TaskRecord[] = rawRecords.map((rec, i) => {
+    const rule = ruleMap.get(rec.ruleId);
+    return {
       id: rec.id || `record_${Date.now()}_${i}`,
       ruleId: rec.ruleId,
-      name: rec.name || '',
-      platform: rec.platform || '其他',
-      category: rec.category || '签到',
+      name: rec.name || rule?.name || '',
+      platform: rec.platform || rule?.platform || '其他',
+      category: rec.category || rule?.category || '签到',
       date: rec.date || getTodayString(),
+      time: rec.time || rule?.time || '09:00',
+      deadline: rec.deadline || rule?.deadline || '23:59',
+      timeSensitive: rec.timeSensitive !== undefined ? !!rec.timeSensitive : !!rule?.timeSensitive,
       plannedAt: rec.plannedAt,
       deadlineAt: rec.deadlineAt,
-      expected: typeof rec.expected === 'number' ? rec.expected : 0,
-      currency: rec.currency || 'CNY',
+      expected: typeof rec.expected === 'number' ? rec.expected : (rule?.amount ?? 0),
+      currency: rec.currency || rule?.currency || 'CNY',
       status: rec.status || 'pending',
       actual: typeof rec.actual === 'number' ? rec.actual : 0,
       received: !!rec.received,
       completedAt: rec.completedAt,
       feedback: rec.feedback || '',
-      path: rec.path || '',
-      notes: rec.notes || '',
-      priority: rec.priority || '中',
+      path: rec.path || rule?.path || '',
+      notes: rec.notes || rule?.notes || '',
+      priority: rec.priority || rule?.priority || '中',
       monthlyLimitReached: !!rec.monthlyLimitReached,
       createdAt: rec.createdAt,
-    })),
+    };
+  });
+
+  return {
+    version: typeof obj.version === 'number' ? obj.version : 2,
+    rules,
+    records,
     _savedAt: Date.now(),
   };
+}
+
+// Synchronize rule changes to existing unexecuted (pending) task records
+export function syncRuleToPendingRecords(
+  data: AppDataBackup,
+  updatedRule: TaskRule
+): { updatedData: AppDataBackup; updatedPendingCount: number; removedPendingCount: number } {
+  let updatedPendingCount = 0;
+  let removedPendingCount = 0;
+
+  // 1. Update rules list
+  const newRules = data.rules.map((r) => (r.id === updatedRule.id ? updatedRule : r));
+
+  // 2. Cascade update or remove pending records for this rule
+  const newRecords: TaskRecord[] = [];
+
+  for (const rec of data.records) {
+    if (rec.ruleId === updatedRule.id) {
+      if (rec.status === 'done') {
+        // Keep completed records intact to preserve historical records & earnings
+        newRecords.push(rec);
+        continue;
+      }
+
+      if (rec.status === 'pending') {
+        // If rule became inactive, prune pending record
+        if (!updatedRule.active) {
+          removedPendingCount++;
+          continue;
+        }
+
+        // If task date is before startDate or after endDate, prune
+        if (updatedRule.startDate && rec.date < updatedRule.startDate) {
+          removedPendingCount++;
+          continue;
+        }
+        if (updatedRule.endDate && rec.date > updatedRule.endDate) {
+          removedPendingCount++;
+          continue;
+        }
+
+        // Check if rule is still scheduled for this date under the new rule schedule
+        if (!isRuleScheduledForDate(updatedRule, rec.date, data.records)) {
+          removedPendingCount++;
+          continue;
+        }
+
+        // Otherwise synchronize all modified attributes from the updated rule!
+        updatedPendingCount++;
+        newRecords.push({
+          ...rec,
+          name: updatedRule.name,
+          platform: updatedRule.platform,
+          category: updatedRule.category,
+          expected: updatedRule.amount,
+          currency: updatedRule.currency,
+          time: updatedRule.time || '09:00',
+          deadline: updatedRule.deadline || '23:59',
+          timeSensitive: !!updatedRule.timeSensitive,
+          path: updatedRule.path,
+          notes: updatedRule.notes,
+          priority: updatedRule.priority,
+        });
+        continue;
+      }
+    }
+
+    // Keep other rules' records or other statuses as-is
+    newRecords.push(rec);
+  }
+
+  const updatedData: AppDataBackup = {
+    ...data,
+    rules: newRules,
+    records: newRecords,
+    _savedAt: Date.now(),
+  };
+
+  saveDataToLocalStorage(updatedData);
+  return { updatedData, updatedPendingCount, removedPendingCount };
 }
 
 // Delete rule and automatically purge its pending records (from given date onward, or all pending records)

@@ -82,6 +82,24 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               </span>
               <span className="text-xs text-slate-400">·</span>
               <span className="text-[11px] text-slate-500">{record.category}</span>
+
+              {/* Time Badge */}
+              {(record.time || rule?.time) && (
+                <span className="text-[10px] font-mono font-medium px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-600 flex items-center gap-0.5">
+                  <Clock className="w-2.5 h-2.5" />
+                  <span>{record.time || rule?.time}</span>
+                  {(record.deadline || rule?.deadline) && (record.deadline || rule?.deadline) !== '23:59' && (
+                    <span>~{record.deadline || rule?.deadline}</span>
+                  )}
+                </span>
+              )}
+
+              {(record.timeSensitive || rule?.timeSensitive) && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-rose-500 text-white shadow-2xs">
+                  ⏰ 限时敏感
+                </span>
+              )}
+
               {isMonthlyLimitRule && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-50 text-amber-700 border border-amber-200/60">
                   自然月限1次
