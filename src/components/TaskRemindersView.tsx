@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { TaskRecord, TaskRule, AppDataBackup } from '../types';
 import { getTodayString } from '../services/dataStorage';
+import { getLunarDateInfo, getWeekDateRange } from '../services/lunarCalendar';
 import { QuickCheckInModal } from './QuickCheckInModal';
 import {
   CheckCircle2,
@@ -19,6 +20,8 @@ import {
   Copy,
   Check,
   CalendarOff,
+  Moon,
+  Sparkles,
 } from 'lucide-react';
 
 interface TaskRemindersViewProps {
@@ -58,6 +61,12 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   // Dynamic today string (e.g. 2026-11-07)
   const todayStr = useMemo(() => getTodayString(), []);
 
+  // Lunar and 24 Solar Terms info for the currently inspected date
+  const lunarInfo = useMemo(() => getLunarDateInfo(currentDate), [currentDate]);
+
+  // Week range for currentDate
+  const weekRange = useMemo(() => getWeekDateRange(currentDate), [currentDate]);
+
   // Rule lookup map
   const rulesMap = useMemo(() => {
     const map = new Map<string, TaskRule>();
@@ -68,7 +77,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   // Current natural month prefix: e.g. "2026-11"
   const currentMonthPrefix = useMemo(() => currentDate.slice(0, 7), [currentDate]);
 
-  // Map of how many times a rule was completed in the current natural month
+  // Map of completed count in current natural month
   const ruleMonthlyDoneCountMap = useMemo(() => {
     const map = new Map<string, number>();
     data.records.forEach((r) => {
@@ -78,6 +87,29 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     });
     return map;
   }, [data.records, currentMonthPrefix]);
+
+  // Map of completed count in current natural week
+  const ruleWeeklyDoneCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    data.records.forEach((r) => {
+      if (r.status === 'done' && r.date >= weekRange.startOfWeek && r.date <= weekRange.endOfWeek) {
+        map.set(r.ruleId, (map.get(r.ruleId) || 0) + 1);
+      }
+    });
+    return map;
+  }, [data.records, weekRange]);
+
+  // Map of completed count in current 24 solar term window
+  const ruleSolarTermDoneCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const { startDate, endDate } = lunarInfo.currentSolarTerm;
+    data.records.forEach((r) => {
+      if (r.status === 'done' && r.date >= startDate && r.date <= endDate) {
+        map.set(r.ruleId, (map.get(r.ruleId) || 0) + 1);
+      }
+    });
+    return map;
+  }, [data.records, lunarInfo]);
 
   // Records for current date
   const todayRecords = useMemo(() => {
@@ -389,6 +421,24 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                 回今日
               </button>
             )}
+
+            {/* Lunar Calendar & 24 Solar Terms Display Pill */}
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50/80 border border-amber-200/70 rounded-xl text-xs text-amber-900 shrink-0">
+              <Moon className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="font-medium text-[11px] sm:text-xs">
+                {lunarInfo.yearGanZhi}({lunarInfo.yearShengXiao})年 · {lunarInfo.monthInChinese}{lunarInfo.dayInChinese}
+              </span>
+              {lunarInfo.solarTerm ? (
+                <span className="px-1.5 py-0.2 rounded-md bg-rose-600 text-white font-bold text-[10px] shadow-2xs flex items-center gap-0.5 animate-pulse">
+                  <Sparkles className="w-2.5 h-2.5" />
+                  今日【{lunarInfo.solarTerm}】节气
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-700/80 hidden md:inline font-mono">
+                  [{lunarInfo.currentSolarTerm.name}节气期]
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Quick Metrics (High density) */}
@@ -795,9 +845,49 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                         : 'bg-amber-50 text-amber-700 border-amber-200'
                                     }`}
-                                    title="该任务每个自然月仅需完成1次"
+                                    title={`该任务每个自然月仅需完成 ${rule?.monthlyLimit} 次`}
                                   >
-                                    {hasReachedMonthlyCap ? '当月已达1次' : '月限1次'}
+                                    {hasReachedMonthlyCap ? `当月已达${rule?.monthlyLimit}次` : `月限${rule?.monthlyLimit}次`}
+                                  </span>
+                                )}
+
+                                {/* Special Weekly Limit Badge */}
+                                {rule?.weeklyLimit && rule.weeklyLimit > 0 && (
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border flex items-center gap-0.5 ${
+                                      (ruleWeeklyDoneCountMap.get(rec.ruleId) || 0) >= rule.weeklyLimit
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : 'bg-blue-50 text-blue-700 border-blue-200'
+                                    }`}
+                                    title={`该任务每个自然周仅需完成 ${rule.weeklyLimit} 次`}
+                                  >
+                                    {(ruleWeeklyDoneCountMap.get(rec.ruleId) || 0) >= rule.weeklyLimit
+                                      ? `本周已达${rule.weeklyLimit}次`
+                                      : `周限${rule.weeklyLimit}次`}
+                                  </span>
+                                )}
+
+                                {/* Special Solar Term Limit Badge */}
+                                {rule?.solarTermLimit && rule.solarTermLimit > 0 && (
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border flex items-center gap-0.5 ${
+                                      (ruleSolarTermDoneCountMap.get(rec.ruleId) || 0) >= rule.solarTermLimit
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : 'bg-purple-50 text-purple-700 border-purple-200'
+                                    }`}
+                                    title={`该任务每个节气周期（${lunarInfo.currentSolarTerm.name}）仅需完成 ${rule.solarTermLimit} 次`}
+                                  >
+                                    {(ruleSolarTermDoneCountMap.get(rec.ruleId) || 0) >= rule.solarTermLimit
+                                      ? `${lunarInfo.currentSolarTerm.name}已达${rule.solarTermLimit}次`
+                                      : `每节气限${rule.solarTermLimit}次`}
+                                  </span>
+                                )}
+
+                                {/* Lunar Frequency indicator */}
+                                {rule?.frequency === 'lunar' && (
+                                  <span className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5">
+                                    <Moon className="w-2.5 h-2.5 text-amber-600" />
+                                    农历
                                   </span>
                                 )}
                               </div>

@@ -2,7 +2,7 @@
  * Type definitions for Periodic Task & Yield Assistant
  */
 
-export type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'solar' | 'once' | 'interval';
+export type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'lunar' | 'solar' | 'once' | 'interval';
 
 export type CurrencyType = 'CNY' | 'points' | 'other';
 
@@ -21,8 +21,10 @@ export interface TaskRule {
   time?: string;      // HH:mm
   deadline?: string;  // HH:mm
   weekdays?: number[]; // [0..6] (0 = Sunday, 1 = Monday...)
-  monthdays?: number[]; // [1..31]
-  solarTerms?: string[]; // e.g. ['立冬', '小雪']
+  monthdays?: number[]; // [1..31] 公历日期
+  lunarMonthdays?: number[]; // [1..30] 农历日期 (例: 1 为初一, 15 为十五)
+  lunarMonths?: number[]; // [1..12] 农历月份 (如空表示每月农历日都触发)
+  solarTerms?: string[]; // e.g. ['立春', '雨水', '立冬', '小雪'...] (中国24节气)
   monthPolicy?: 'skip' | 'lastDay' | string;
   intervalN?: number;
   unit?: 'day' | 'week' | 'month' | 'year' | string;
@@ -33,7 +35,9 @@ export interface TaskRule {
   priority: PriorityType;
   active: boolean;
   timeSensitive?: boolean; // 是否时间敏感（如特定时间点抢券/限时活动，列表将优先置顶提醒）
-  monthlyLimit?: number; // 自然月内最多完成次数，例如 1 表示当月完成 1 次后，本月后续触发日自动不再提醒
+  monthlyLimit?: number; // 自然月内最多完成次数 (例: 1 表示当月做满 1 次后后续自动免提醒)
+  weeklyLimit?: number;  // 自然周内最多完成次数 (例: 1 表示本周做满 1 次后本周后续触发日自动免提醒)
+  solarTermLimit?: number; // 每个节气周期内最多完成次数 (例: 1 表示每到立冬、小雪等节气期间只做 1 次，做完免提醒)
   path?: string;      // App internal navigation path e.g. "赚现金->签到"
   notes?: string;
   createdAt?: string;
@@ -62,7 +66,9 @@ export interface TaskRecord {
   path?: string;
   notes?: string;
   priority?: PriorityType;
-  monthlyLimitReached?: boolean; // 当月已达完成次数上限，本月后续待办已标记/免提醒
+  monthlyLimitReached?: boolean; // 当月已达完成次数上限
+  weeklyLimitReached?: boolean;  // 当周已达完成次数上限
+  solarTermLimitReached?: boolean; // 当期节气已达完成次数上限
   createdAt?: string;
 }
 

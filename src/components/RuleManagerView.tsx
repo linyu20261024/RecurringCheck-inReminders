@@ -13,7 +13,9 @@ import {
   X,
   Repeat,
   Sparkles,
+  Moon,
 } from 'lucide-react';
+import { ALL_SOLAR_TERMS, LUNAR_DAY_NAMES } from '../services/lunarCalendar';
 
 interface RuleManagerViewProps {
   rules: TaskRule[];
@@ -51,8 +53,16 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
   const [formEndDate, setFormEndDate] = useState('');
   const [hasMonthlyLimit, setHasMonthlyLimit] = useState(false);
   const [formMonthlyLimit, setFormMonthlyLimit] = useState('1');
+  const [hasWeeklyLimit, setHasWeeklyLimit] = useState(false);
+  const [formWeeklyLimit, setFormWeeklyLimit] = useState('1');
+  const [hasSolarTermLimit, setHasSolarTermLimit] = useState(false);
+  const [formSolarTermLimit, setFormSolarTermLimit] = useState('1');
+
   const [formWeekdays, setFormWeekdays] = useState<number[]>([]);
   const [formMonthdays, setFormMonthdays] = useState<string>('1');
+  const [formLunarMonthdays, setFormLunarMonthdays] = useState<number[]>([1, 15]); // default 初一、十五
+  const [formSolarTerms, setFormSolarTerms] = useState<string[]>([...ALL_SOLAR_TERMS]); // default all 24 solar terms
+
   const [formAmount, setFormAmount] = useState('0');
   const [formCurrency, setFormCurrency] = useState<CurrencyType>('CNY');
   const [formPriority, setFormPriority] = useState<PriorityType>('中');
@@ -103,8 +113,14 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormEndDate('');
     setHasMonthlyLimit(false);
     setFormMonthlyLimit('1');
+    setHasWeeklyLimit(false);
+    setFormWeeklyLimit('1');
+    setHasSolarTermLimit(false);
+    setFormSolarTermLimit('1');
     setFormWeekdays([]);
     setFormMonthdays('1');
+    setFormLunarMonthdays([1, 15]);
+    setFormSolarTerms([...ALL_SOLAR_TERMS]);
     setFormAmount('0');
     setFormCurrency('CNY');
     setFormPriority('中');
@@ -127,8 +143,14 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormEndDate(rule.endDate || '');
     setHasMonthlyLimit(!!rule.monthlyLimit && rule.monthlyLimit > 0);
     setFormMonthlyLimit(rule.monthlyLimit ? String(rule.monthlyLimit) : '1');
+    setHasWeeklyLimit(!!rule.weeklyLimit && rule.weeklyLimit > 0);
+    setFormWeeklyLimit(rule.weeklyLimit ? String(rule.weeklyLimit) : '1');
+    setHasSolarTermLimit(!!rule.solarTermLimit && rule.solarTermLimit > 0);
+    setFormSolarTermLimit(rule.solarTermLimit ? String(rule.solarTermLimit) : '1');
     setFormWeekdays(rule.weekdays || []);
     setFormMonthdays((rule.monthdays || []).join(', ') || '1');
+    setFormLunarMonthdays(rule.lunarMonthdays && rule.lunarMonthdays.length > 0 ? rule.lunarMonthdays : [1, 15]);
+    setFormSolarTerms(rule.solarTerms && rule.solarTerms.length > 0 ? rule.solarTerms : [...ALL_SOLAR_TERMS]);
     setFormAmount(String(rule.amount ?? 0));
     setFormCurrency(rule.currency);
     setFormPriority(rule.priority);
@@ -152,6 +174,8 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     const now = new Date().toISOString();
     const cleanEndDate = hasEndDate && formEndDate.trim() ? formEndDate.trim() : undefined;
     const parsedMonthlyLimit = hasMonthlyLimit ? Math.max(1, parseInt(formMonthlyLimit, 10) || 1) : undefined;
+    const parsedWeeklyLimit = hasWeeklyLimit ? Math.max(1, parseInt(formWeeklyLimit, 10) || 1) : undefined;
+    const parsedSolarTermLimit = hasSolarTermLimit ? Math.max(1, parseInt(formSolarTermLimit, 10) || 1) : undefined;
     const cleanTime = formTime.trim() || '09:00';
     const cleanDeadline = formDeadline.trim() || '23:59';
 
@@ -168,8 +192,12 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         deadline: cleanDeadline,
         timeSensitive: formTimeSensitive,
         monthlyLimit: parsedMonthlyLimit,
+        weeklyLimit: parsedWeeklyLimit,
+        solarTermLimit: parsedSolarTermLimit,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
         monthdays: formFrequency === 'monthly' ? parsedMonthDays : [],
+        lunarMonthdays: formFrequency === 'lunar' ? formLunarMonthdays : [],
+        solarTerms: formFrequency === 'solar' ? formSolarTerms : [],
         amount: isNaN(amt) ? 0 : amt,
         currency: formCurrency,
         priority: formPriority,
@@ -191,8 +219,12 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         deadline: cleanDeadline,
         timeSensitive: formTimeSensitive,
         monthlyLimit: parsedMonthlyLimit,
+        weeklyLimit: parsedWeeklyLimit,
+        solarTermLimit: parsedSolarTermLimit,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
         monthdays: formFrequency === 'monthly' ? parsedMonthDays : [],
+        lunarMonthdays: formFrequency === 'lunar' ? formLunarMonthdays : [],
+        solarTerms: formFrequency === 'solar' ? formSolarTerms : [],
         amount: isNaN(amt) ? 0 : amt,
         currency: formCurrency,
         priority: formPriority,
@@ -365,6 +397,22 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                             月限{r.monthlyLimit}次
                           </span>
                         )}
+                        {r.weeklyLimit && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                            周限{r.weeklyLimit}次
+                          </span>
+                        )}
+                        {r.solarTermLimit && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                            节气限{r.solarTermLimit}次
+                          </span>
+                        )}
+                        {r.frequency === 'lunar' && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100/70 text-amber-800 border border-amber-300/60 flex items-center gap-0.5">
+                            <Moon className="w-2.5 h-2.5 text-amber-600" />
+                            农历
+                          </span>
+                        )}
                       </div>
 
                       {/* Schedule & Time info */}
@@ -379,7 +427,10 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                           {r.frequency === 'weekly' &&
                             `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
                           {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
-                          {r.frequency === 'solar' && '24节气'}
+                          {r.frequency === 'lunar' &&
+                            `农历 ${(r.lunarMonthdays || []).map((d) => LUNAR_DAY_NAMES[d - 1] || `${d}日`).join('、')}`}
+                          {r.frequency === 'solar' &&
+                            `${(r.solarTerms || []).length === 24 || !(r.solarTerms?.length) ? '24节气活动' : (r.solarTerms || []).join('、')}`}
                           {r.frequency === 'once' && '单次'}
                         </span>
                         <span className="text-slate-300">·</span>
@@ -492,6 +543,22 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                               月限{r.monthlyLimit}次
                             </span>
                           )}
+                          {r.weeklyLimit && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                              周限{r.weeklyLimit}次
+                            </span>
+                          )}
+                          {r.solarTermLimit && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                              节气限{r.solarTermLimit}次
+                            </span>
+                          )}
+                          {r.frequency === 'lunar' && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100/70 text-amber-800 border border-amber-300/60 flex items-center gap-0.5">
+                              <Moon className="w-2.5 h-2.5 text-amber-600" />
+                              农历
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-400">
                           <span>{r.category}</span>
@@ -510,7 +577,10 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                           {r.frequency === 'weekly' &&
                             `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
                           {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
-                          {r.frequency === 'solar' && '24节气活动'}
+                          {r.frequency === 'lunar' &&
+                            `农历 ${(r.lunarMonthdays || []).map((d) => LUNAR_DAY_NAMES[d - 1] || `${d}日`).join('、')}`}
+                          {r.frequency === 'solar' &&
+                            `${(r.solarTerms || []).length === 24 || !(r.solarTerms?.length) ? '24节气活动' : (r.solarTerms || []).join('、')}`}
                           {r.frequency === 'once' && '单次'}
                         </div>
                       </td>
@@ -730,8 +800,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                   >
                     <option value="daily">每日 (daily)</option>
                     <option value="weekly">每周 (weekly)</option>
-                    <option value="monthly">每月 (monthly)</option>
-                    <option value="solar">节气 (solar)</option>
+                    <option value="monthly">公历每月 (monthly)</option>
+                    <option value="lunar">农历每月/特定农历日 (lunar)</option>
+                    <option value="solar">中国二十四节气 (solar)</option>
                     <option value="once">单次 (once)</option>
                   </select>
                 </div>
@@ -827,10 +898,16 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                 </div>
               </div>
 
-              {/* Monthly Limit Feature (每周五触发但当月仅限1次) */}
-              <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-1.5 text-xs font-bold text-amber-950 cursor-pointer">
+              {/* Advanced Period Limits Box: Week Limit, Month Limit, Solar Term Limit */}
+              <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-2.5">
+                <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  周期内完成次数上限控制（达标后自动免提醒）
+                </div>
+
+                {/* 1. Monthly Limit */}
+                <div className="space-y-1">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={hasMonthlyLimit}
@@ -839,22 +916,75 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                     />
                     <span>限制自然月最多完成次数（如：每周五触发但当月只做 1 次）</span>
                   </label>
+                  {hasMonthlyLimit && (
+                    <div className="flex items-center gap-2 pl-5 pt-0.5">
+                      <span className="text-[11px] text-amber-800">当月达成</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={formMonthlyLimit}
+                        onChange={(e) => setFormMonthlyLimit(e.target.value)}
+                        className="w-16 px-2 py-0.5 bg-white border border-amber-300 rounded-lg text-xs font-bold tabular-nums text-amber-900 focus:outline-hidden"
+                      />
+                      <span className="text-[11px] text-amber-800">次后，当月后续触发日自动免提醒</span>
+                    </div>
+                  )}
                 </div>
 
-                {hasMonthlyLimit && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <span className="text-xs text-amber-800">当月达成</span>
+                {/* 2. Weekly Limit */}
+                <div className="space-y-1 border-t border-amber-200/50 pt-1.5">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
                     <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={formMonthlyLimit}
-                      onChange={(e) => setFormMonthlyLimit(e.target.value)}
-                      className="w-16 px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold tabular-nums text-amber-900 focus:outline-hidden"
+                      type="checkbox"
+                      checked={hasWeeklyLimit}
+                      onChange={(e) => setHasWeeklyLimit(e.target.checked)}
+                      className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
                     />
-                    <span className="text-xs text-amber-800">次后，本月后续触发日自动免提醒</span>
-                  </div>
-                )}
+                    <span>限制自然周最多完成次数（如：周一到周五均可办，但每周仅限 1 次）</span>
+                  </label>
+                  {hasWeeklyLimit && (
+                    <div className="flex items-center gap-2 pl-5 pt-0.5">
+                      <span className="text-[11px] text-amber-800">自然周达成</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="7"
+                        value={formWeeklyLimit}
+                        onChange={(e) => setFormWeeklyLimit(e.target.value)}
+                        className="w-16 px-2 py-0.5 bg-white border border-amber-300 rounded-lg text-xs font-bold tabular-nums text-amber-900 focus:outline-hidden"
+                      />
+                      <span className="text-[11px] text-amber-800">次后，本周后续触发日自动免提醒</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Solar Term Limit */}
+                <div className="space-y-1 border-t border-amber-200/50 pt-1.5">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hasSolarTermLimit}
+                      onChange={(e) => setHasSolarTermLimit(e.target.checked)}
+                      className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>限制每个24节气最多完成次数（如：每到立冬、小雪等节气期间仅做 1 次）</span>
+                  </label>
+                  {hasSolarTermLimit && (
+                    <div className="flex items-center gap-2 pl-5 pt-0.5">
+                      <span className="text-[11px] text-amber-800">每个节气达成</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="15"
+                        value={formSolarTermLimit}
+                        onChange={(e) => setFormSolarTermLimit(e.target.value)}
+                        className="w-16 px-2 py-0.5 bg-white border border-amber-300 rounded-lg text-xs font-bold tabular-nums text-amber-900 focus:outline-hidden"
+                      />
+                      <span className="text-[11px] text-amber-800">次后，该节气期内后续触发日自动免提醒</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Weekly Day Selector */}
@@ -882,11 +1012,11 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                 </div>
               )}
 
-              {/* Monthly Day Selector */}
+              {/* Monthly Day Selector (Solar) */}
               {formFrequency === 'monthly' && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    每月哪几天提醒 (逗号隔开，例: 1, 10, 15, 20)
+                    公历每月哪几天提醒 (逗号隔开，例: 1, 10, 15, 20)
                   </label>
                   <input
                     type="text"
@@ -895,6 +1025,115 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                     placeholder="1, 10, 15"
                     className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden"
                   />
+                </div>
+              )}
+
+              {/* Lunar Day Selector */}
+              {formFrequency === 'lunar' && (
+                <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-900 flex items-center gap-1">
+                      <Moon className="w-3.5 h-3.5 text-amber-600" />
+                      农历日期设定 (中国传统阴历)
+                    </label>
+                    <div className="flex gap-1 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setFormLunarMonthdays([1, 15])}
+                        className="text-amber-700 hover:underline"
+                      >
+                        初一与十五
+                      </button>
+                      <span className="text-amber-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormLunarMonthdays([1])}
+                        className="text-amber-700 hover:underline"
+                      >
+                        仅初一
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500">点击选择每个农历月的触发日子（如初一吃斋/迎财神、十五满月任务）：</p>
+                  <div className="grid grid-cols-6 sm:grid-cols-10 gap-1 pt-1">
+                    {Array.from({ length: 30 }, (_, i) => i + 1).map((d) => {
+                      const isSelected = formLunarMonthdays.includes(d);
+                      const dayLabel = LUNAR_DAY_NAMES[d - 1] || `${d}日`;
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            setFormLunarMonthdays((prev) =>
+                              prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)
+                            );
+                          }}
+                          className={`py-1 text-[10px] font-medium rounded-lg border transition-colors ${
+                            isSelected
+                              ? 'bg-amber-600 text-white border-amber-600 font-bold shadow-2xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
+                          }`}
+                        >
+                          {dayLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 24 Solar Terms Selector */}
+              {formFrequency === 'solar' && (
+                <div className="p-3 bg-purple-50/60 border border-purple-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-purple-900 flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                      中国二十四节气范围选择
+                    </label>
+                    <div className="flex gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setFormSolarTerms([...ALL_SOLAR_TERMS])}
+                        className="text-purple-700 hover:underline"
+                      >
+                        全选24节气
+                      </button>
+                      <span className="text-purple-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormSolarTerms([])}
+                        className="text-purple-700 hover:underline"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500">勾选适用的节气（工行、银行等APP节气礼遇通常在节气当日生效）：</p>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 pt-1">
+                    {ALL_SOLAR_TERMS.map((term) => {
+                      const isSelected = formSolarTerms.includes(term);
+                      return (
+                        <button
+                          key={term}
+                          type="button"
+                          onClick={() => {
+                            setFormSolarTerms((prev) =>
+                              prev.includes(term) ? prev.filter((t) => t !== term) : [...prev, term]
+                            );
+                          }}
+                          className={`py-1 text-xs rounded-lg border transition-colors font-medium ${
+                            isSelected
+                              ? 'bg-purple-600 text-white border-purple-600 font-bold shadow-2xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-purple-50'
+                          }`}
+                        >
+                          {term}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 

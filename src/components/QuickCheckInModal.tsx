@@ -102,7 +102,25 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
 
               {isMonthlyLimitRule && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-50 text-amber-700 border border-amber-200/60">
-                  自然月限1次
+                  月限{rule?.monthlyLimit}次
+                </span>
+              )}
+
+              {rule?.weeklyLimit && rule.weeklyLimit > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60">
+                  周限{rule.weeklyLimit}次
+                </span>
+              )}
+
+              {rule?.solarTermLimit && rule.solarTermLimit > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-purple-50 text-purple-700 border border-purple-200/60">
+                  节气限{rule.solarTermLimit}次
+                </span>
+              )}
+
+              {rule?.frequency === 'lunar' && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 border border-amber-300/60">
+                  农历周期
                 </span>
               )}
             </div>

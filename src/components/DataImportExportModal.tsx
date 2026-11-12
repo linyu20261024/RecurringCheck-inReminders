@@ -1,7 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { AppDataBackup } from '../types';
 import {
-  DEFAULT_BACKUP_PATH,
   normalizeBackupData,
   exportDataAsJson,
   saveDataToLocalStorage,
@@ -14,7 +13,6 @@ import {
   Download,
   CheckCircle2,
   AlertCircle,
-  RefreshCw,
   FolderOpen,
   Trash2,
   X,
@@ -39,34 +37,6 @@ export const DataImportExportModal: React.FC<DataImportExportModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
-
-  // Load from preloaded workspace backup file
-  const handleLoadSampleFile = async () => {
-    setLoading(true);
-    setStatusMsg(null);
-    try {
-      const res = await fetch(DEFAULT_BACKUP_PATH);
-      if (!res.ok) {
-        throw new Error(`加载失败: HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      const normalized = normalizeBackupData(json);
-      saveDataToLocalStorage(normalized);
-      onDataLoaded(normalized);
-      setStatusMsg({
-        type: 'success',
-        text: `成功导入随附备份数据！包含 ${normalized.rules.length} 条规则、${normalized.records.length} 条打卡记录。`,
-      });
-    } catch (err) {
-      console.error(err);
-      setStatusMsg({
-        type: 'error',
-        text: `读取备份文件失败: ${(err as Error).message}`,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Handle uploaded JSON file
   const handleFileProcess = (file: File) => {
@@ -208,30 +178,6 @@ export const DataImportExportModal: React.FC<DataImportExportModalProps> = ({
             <p className="text-xs text-slate-500 mt-1">
               支持任意周期任务备份（.json）文件，数据纯本地解析并保存在浏览器中
             </p>
-          </div>
-
-          {/* Optional Helper: Load Sample File if present */}
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-semibold text-slate-700 block">
-                  从工作区内置随附文件载入
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  若工作区包含历史样本文件，可一键导入
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleLoadSampleFile}
-                disabled={loading}
-                className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 disabled:opacity-50 rounded-xl text-xs font-semibold shadow-2xs transition-colors shrink-0 flex items-center gap-1.5"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                尝试载入
-              </button>
-            </div>
           </div>
 
           {/* Current In-Memory Stats */}

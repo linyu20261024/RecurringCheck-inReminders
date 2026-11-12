@@ -101,8 +101,8 @@ export default function App() {
     }
   }, [currentDate, data?.rules]);
 
-  // Update a single record (supports auto-skipping remaining days in month if monthly limit reached)
-  const handleUpdateRecord = useCallback((updated: TaskRecord, skipRestOfMonth?: boolean) => {
+  // Update a single record (supports auto-skipping remaining days in period when weekly/monthly/solar limit reached)
+  const handleUpdateRecord = useCallback((updated: TaskRecord, skipRestOfPeriod?: boolean) => {
     setData((prev) => {
       if (!prev) return prev;
       const index = prev.records.findIndex((r) => r.id === updated.id);
@@ -116,11 +116,14 @@ export default function App() {
       let nextData: AppDataBackup = { ...prev, records: newRecords };
 
       const rule = prev.rules.find((r) => r.id === updated.ruleId);
-      const shouldSkipMonth =
-        skipRestOfMonth ||
-        (updated.status === 'done' && !!rule?.monthlyLimit && rule.monthlyLimit > 0);
+      const hasAnyCap =
+        (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
+        (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
+        (!!rule?.solarTermLimit && rule.solarTermLimit > 0);
 
-      if (shouldSkipMonth) {
+      const shouldSkipFuture = skipRestOfPeriod || (updated.status === 'done' && hasAnyCap);
+
+      if (shouldSkipFuture) {
         nextData = skipFutureMonthlyLimitRecords(nextData, updated.ruleId, updated.date);
       } else {
         saveDataToLocalStorage(nextData);
@@ -130,7 +133,7 @@ export default function App() {
     });
   }, []);
 
-  // One-click skip rest of month
+  // One-click skip rest of period
   const handleSkipMonthRemaining = useCallback((ruleId: string, fromDate: string) => {
     setData((prev) => {
       if (!prev) return prev;

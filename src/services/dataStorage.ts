@@ -1,7 +1,7 @@
 import { AppDataBackup, TaskRule, TaskRecord, OptimizationDiagnosis } from '../types';
+import { getLunarDateInfo, getWeekDateRange, isLunarRuleMatched } from './lunarCalendar';
 
 const STORAGE_KEY = 'periodic_tasks_app_data_v2';
-export const DEFAULT_BACKUP_PATH = '/assets/aistudio/_______2026-11-06_defd55f3.json';
 
 // Helper: safe JSON parse
 export function safeJsonParse<T>(jsonStr: string, fallback: T): T {
@@ -91,6 +91,8 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       timeSensitive: isTimeSensitive,
       weekdays: Array.isArray(r.weekdays) ? r.weekdays : [],
       monthdays: Array.isArray(r.monthdays) ? r.monthdays : [],
+      lunarMonthdays: Array.isArray(r.lunarMonthdays) ? r.lunarMonthdays : [],
+      lunarMonths: Array.isArray(r.lunarMonths) ? r.lunarMonths : [],
       solarTerms: Array.isArray(r.solarTerms) ? r.solarTerms : [],
       monthPolicy: r.monthPolicy || 'skip',
       intervalN: typeof r.intervalN === 'number' ? r.intervalN : 1,
@@ -100,6 +102,8 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       priority: r.priority || '中',
       active: r.active !== false,
       monthlyLimit: typeof r.monthlyLimit === 'number' && r.monthlyLimit > 0 ? r.monthlyLimit : undefined,
+      weeklyLimit: typeof r.weeklyLimit === 'number' && r.weeklyLimit > 0 ? r.weeklyLimit : undefined,
+      solarTermLimit: typeof r.solarTermLimit === 'number' && r.solarTermLimit > 0 ? r.solarTermLimit : undefined,
       path: r.path || '',
       notes: r.notes || '',
       createdAt: r.createdAt || new Date().toISOString(),
@@ -135,6 +139,8 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       notes: rec.notes || rule?.notes || '',
       priority: rec.priority || rule?.priority || '中',
       monthlyLimitReached: !!rec.monthlyLimitReached,
+      weeklyLimitReached: !!rec.weeklyLimitReached,
+      solarTermLimitReached: !!rec.solarTermLimitReached,
       createdAt: rec.createdAt,
     };
   });
@@ -392,7 +398,7 @@ export function analyzeTemplateOptimization(data: AppDataBackup): OptimizationDi
 }
 
 // Check if a rule is scheduled for a given date string (YYYY-MM-DD)
-// Strictly honors startDate, endDate, and monthlyLimit (e.g. once per natural month)
+// Strictly honors startDate, endDate, weeklyLimit, monthlyLimit, solarTermLimit, and lunar/solar calculations
 export function isRuleScheduledForDate(
   rule: TaskRule,
   dateStr: string,
@@ -402,69 +408,164 @@ export function isRuleScheduledForDate(
   if (rule.startDate && dateStr < rule.startDate) return false;
   if (rule.endDate && dateStr > rule.endDate) return false;
 
-  // Monthly limit check: e.g. "每周五触发但一个自然月只能做1次"
+  const date = new Date(`${dateStr}T12:00:00`);
+  const dayOfWeek = date.getDay(); // 0 is Sunday
+  const dayOfMonth = date.getDate();
+  const lunarInfo = getLunarDateInfo(dateStr);
+
+  // 1. Weekly limit check: e.g. "周频次但每周只能做 1 次"
+  if (rule.weeklyLimit && rule.weeklyLimit > 0 && existingRecords) {
+    const { startOfWeek, endOfWeek } = getWeekDateRange(dateStr);
+    const doneInWeek = existingRecords.filter(
+      (r) =>
+        r.ruleId === rule.id &&
+        r.status === 'done' &&
+        r.date >= startOfWeek &&
+        r.date <= endOfWeek
+    );
+    if (doneInWeek.length >= rule.weeklyLimit) {
+      const isDoneOnThisDate = doneInWeek.some((r) => r.date === dateStr);
+      if (!isDoneOnThisDate) {
+        return false; // Weekly limit reached!
+      }
+    }
+  }
+
+  // 2. Monthly limit check: e.g. "每周五触发但一个自然月只能做 1 次"
   if (rule.monthlyLimit && rule.monthlyLimit > 0 && existingRecords) {
     const monthPrefix = dateStr.slice(0, 7);
     const doneInMonth = existingRecords.filter(
       (r) => r.ruleId === rule.id && r.status === 'done' && r.date.startsWith(monthPrefix)
     );
-    // If user already completed this rule on an earlier date of the same month
     if (doneInMonth.length >= rule.monthlyLimit) {
-      // If there is already a done record on THIS exact date, keep it visible
       const isDoneOnThisDate = doneInMonth.some((r) => r.date === dateStr);
       if (!isDoneOnThisDate) {
-        return false; // Monthly cap reached! Do not schedule or remind subsequent dates in this month
+        return false; // Monthly limit reached!
       }
     }
   }
 
-  const date = new Date(`${dateStr}T12:00:00`);
-  const dayOfWeek = date.getDay(); // 0 is Sunday
-  const dayOfMonth = date.getDate();
+  // 3. Solar term limit check: e.g. "中国24节气活动，每个节气周期（约15天）内做满指定次数即免提醒"
+  if (rule.solarTermLimit && rule.solarTermLimit > 0 && existingRecords) {
+    const { startDate, endDate } = lunarInfo.currentSolarTerm;
+    const doneInSolarTerm = existingRecords.filter(
+      (r) =>
+        r.ruleId === rule.id &&
+        r.status === 'done' &&
+        r.date >= startDate &&
+        r.date <= endDate
+    );
+    if (doneInSolarTerm.length >= rule.solarTermLimit) {
+      const isDoneOnThisDate = doneInSolarTerm.some((r) => r.date === dateStr);
+      if (!isDoneOnThisDate) {
+        return false; // Solar term limit reached for this 24-solar-term window!
+      }
+    }
+  }
 
   switch (rule.frequency) {
     case 'daily':
       return true;
+
     case 'weekly':
       if (rule.weekdays && rule.weekdays.length > 0) {
         return rule.weekdays.includes(dayOfWeek);
       }
       return true;
+
     case 'monthly':
       if (rule.monthdays && rule.monthdays.length > 0) {
         return rule.monthdays.includes(dayOfMonth);
       }
       return dayOfMonth === 1;
+
+    case 'lunar':
+      // Chinese Lunar Date support (e.g. 每逢农历初一、十五，或者特定农历月特定农历日)
+      return isLunarRuleMatched(dateStr, rule.lunarMonthdays, rule.lunarMonths);
+
     case 'solar':
-      return true;
+      // Chinese 24 Solar Terms (中国二十四节气)
+      // Check if this date falls on a selected solar term
+      if (rule.solarTerms && rule.solarTerms.length > 0) {
+        // If specified specific solar terms, check if today is the solar term or within the term
+        // If today is the solar term entrance day
+        if (lunarInfo.solarTerm && rule.solarTerms.includes(lunarInfo.solarTerm)) {
+          return true;
+        }
+        // If rule specifies active solar term window
+        return rule.solarTerms.includes(lunarInfo.currentSolarTerm.name);
+      }
+      // If no specific solar terms selected, defaults to all 24 solar terms (active each solar term day)
+      return !!lunarInfo.solarTerm;
+
     case 'once':
       return rule.startDate === dateStr;
+
     case 'interval':
       return true;
+
     default:
       return true;
   }
 }
 
-// Automatically skip or suppress subsequent pending records of a rule in the same natural month
-export function skipFutureMonthlyLimitRecords(
+// Automatically skip or suppress subsequent pending records of a rule when a limit (monthly / weekly / solar term) is fulfilled
+export function skipFutureLimitRecords(
   data: AppDataBackup,
   ruleId: string,
   completedDate: string
 ): AppDataBackup {
+  const rule = data.rules.find((r) => r.id === ruleId);
+  if (!rule) return data;
+
   const monthPrefix = completedDate.slice(0, 7);
+  const { startOfWeek, endOfWeek } = getWeekDateRange(completedDate);
+  const lunarInfo = getLunarDateInfo(completedDate);
+  const solarTermWindow = lunarInfo.currentSolarTerm;
+
   let changed = false;
 
   const newRecords = data.records.map((rec) => {
-    if (rec.ruleId === ruleId && rec.date.startsWith(monthPrefix) && rec.date > completedDate) {
-      if (rec.status === 'pending') {
-        changed = true;
-        return {
-          ...rec,
-          status: 'skipped' as const,
-          monthlyLimitReached: true,
-          feedback: rec.feedback ? `${rec.feedback} (当月已达1次上限)` : '当月已完成，免提醒',
-        };
+    if (rec.ruleId === ruleId && rec.status === 'pending' && rec.date > completedDate) {
+      // 1. Check weekly limit
+      if (rule.weeklyLimit && rule.weeklyLimit > 0) {
+        if (rec.date >= startOfWeek && rec.date <= endOfWeek) {
+          changed = true;
+          return {
+            ...rec,
+            status: 'skipped' as const,
+            weeklyLimitReached: true,
+            feedback: rec.feedback ? `${rec.feedback} (本周已达${rule.weeklyLimit}次上限)` : `本周已完成${rule.weeklyLimit}次，后续免提醒`,
+          };
+        }
+      }
+
+      // 2. Check monthly limit
+      if (rule.monthlyLimit && rule.monthlyLimit > 0) {
+        if (rec.date.startsWith(monthPrefix)) {
+          changed = true;
+          return {
+            ...rec,
+            status: 'skipped' as const,
+            monthlyLimitReached: true,
+            feedback: rec.feedback ? `${rec.feedback} (当月已达${rule.monthlyLimit}次上限)` : `当月已完成${rule.monthlyLimit}次，免提醒`,
+          };
+        }
+      }
+
+      // 3. Check solar term limit
+      if (rule.solarTermLimit && rule.solarTermLimit > 0) {
+        if (rec.date >= solarTermWindow.startDate && rec.date <= solarTermWindow.endDate) {
+          changed = true;
+          return {
+            ...rec,
+            status: 'skipped' as const,
+            solarTermLimitReached: true,
+            feedback: rec.feedback
+              ? `${rec.feedback} (${solarTermWindow.name}节气已达${rule.solarTermLimit}次)`
+              : `【${solarTermWindow.name}】节气已达${rule.solarTermLimit}次上限，免提醒`,
+          };
+        }
       }
     }
     return rec;
@@ -479,5 +580,14 @@ export function skipFutureMonthlyLimitRecords(
   };
   saveDataToLocalStorage(updated);
   return updated;
+}
+
+// Keep skipFutureMonthlyLimitRecords as alias for backwards-compatibility
+export function skipFutureMonthlyLimitRecords(
+  data: AppDataBackup,
+  ruleId: string,
+  completedDate: string
+): AppDataBackup {
+  return skipFutureLimitRecords(data, ruleId, completedDate);
 }
 
