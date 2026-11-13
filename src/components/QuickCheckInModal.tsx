@@ -124,6 +124,12 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                 </span>
               )}
 
+              {rule?.frequency === 'yearly' && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-rose-50 text-rose-700 border border-rose-200/70">
+                  公历年度周期
+                </span>
+              )}
+
               {rule?.frequency === 'lunar' && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 border border-amber-300/60">
                   {rule.lunarMonths && rule.lunarMonths.length > 0 ? '农历年度周期' : '农历周期'}
@@ -136,7 +142,8 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                   提前提醒 · 距正日({(record.targetDate || '').slice(5)})还有 {record.daysUntilTarget} 天
                 </span>
               )}
-              {record.daysUntilTarget === 0 && (isAdvanceReminderRule || rule?.frequency === 'lunar') && (
+              {record.daysUntilTarget === 0 &&
+                (isAdvanceReminderRule || rule?.frequency === 'lunar' || rule?.frequency === 'yearly') && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
                   🎯 今日正日
                 </span>

@@ -2,7 +2,7 @@
  * Type definitions for Periodic Task & Yield Assistant
  */
 
-export type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'lunar' | 'solar' | 'once' | 'interval';
+export type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'lunar' | 'solar' | 'once' | 'interval';
 
 export type CurrencyType = 'CNY' | 'points' | 'other';
 
@@ -14,7 +14,7 @@ export interface TaskRule {
   id: string;
   name: string;
   platform: string;
-  category: string; // '签到' | '收益任务' | '限时活动' | '投资/理财' | etc.
+  category: string; // '签到' | '收益任务' | '限时活动' | '投资/理财' | '纪念/生日' | etc.
   frequency: FrequencyType;
   startDate: string; // YYYY-MM-DD (开始日期)
   endDate?: string;   // YYYY-MM-DD (结束日期，留空或未定义表示长期有效)
@@ -22,6 +22,7 @@ export interface TaskRule {
   deadline?: string;  // HH:mm
   weekdays?: number[]; // [0..6] (0 = Sunday, 1 = Monday...)
   monthdays?: number[]; // [1..31] 公历日期
+  solarMonths?: number[]; // [1..12] 公历年度月份 (用于 yearly 公历生日/纪念日，如 [5] + monthdays:[20] = 每年5月20日)
   lunarMonthdays?: number[]; // [1..30] 农历日期 (例: 1 为初一, 15 为十五)
   lunarMonths?: number[]; // [1..12] 农历月份 (为空表示农历每月都触发；非空表示年度农历某月某日，如 [5] + [23] = 每年农历五月廿三)
   lunarIncludeLeapMonth?: boolean; // 遇到农历闰月时是否同样提醒（默认 false，生日等场景不重复提醒）

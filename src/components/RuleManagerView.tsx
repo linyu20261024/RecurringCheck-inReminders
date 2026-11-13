@@ -23,7 +23,11 @@ import {
   getNextLunarMatchDate,
   formatLunarScheduleText,
 } from '../services/lunarCalendar';
-import { addDays } from '../services/dataStorage';
+import {
+  addDays,
+  formatGregorianYearlyText,
+  getNextGregorianYearlyMatchDate,
+} from '../services/dataStorage';
 
 interface RuleManagerViewProps {
   rules: TaskRule[];
@@ -68,6 +72,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
 
   const [formWeekdays, setFormWeekdays] = useState<number[]>([]);
   const [formMonthdays, setFormMonthdays] = useState<string>('1');
+  const [formSolarMonths, setFormSolarMonths] = useState<number[]>([1]);
+  const [formYearlyDays, setFormYearlyDays] = useState<number[]>([1]);
+  const [formYearlyLastDayPolicy, setFormYearlyLastDayPolicy] = useState<'lastDay' | 'skip'>('lastDay');
   const [formLunarMode, setFormLunarMode] = useState<'yearly' | 'monthly'>('monthly');
   const [formLunarMonths, setFormLunarMonths] = useState<number[]>([]);
   const [formLunarMonthdays, setFormLunarMonthdays] = useState<number[]>([1, 15]); // default 初一、十五
@@ -132,6 +139,10 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormSolarTermLimit('1');
     setFormWeekdays([]);
     setFormMonthdays('1');
+    const [, curM, curD] = currentDate.split('-').map((n) => parseInt(n, 10));
+    setFormSolarMonths([curM || 1]);
+    setFormYearlyDays([curD || 1]);
+    setFormYearlyLastDayPolicy('lastDay');
     setFormLunarMode('monthly');
     setFormLunarMonths([]);
     setFormLunarMonthdays([1, 15]);
@@ -167,6 +178,21 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormSolarTermLimit(rule.solarTermLimit ? String(rule.solarTermLimit) : '1');
     setFormWeekdays(rule.weekdays || []);
     setFormMonthdays((rule.monthdays || []).join(', ') || '1');
+    setFormSolarMonths(
+      rule.solarMonths && rule.solarMonths.length > 0
+        ? [...rule.solarMonths]
+        : rule.yearMonth
+          ? [rule.yearMonth]
+          : [1]
+    );
+    setFormYearlyDays(
+      rule.monthdays && rule.monthdays.length > 0
+        ? [...rule.monthdays]
+        : rule.yearDay
+          ? [rule.yearDay]
+          : [1]
+    );
+    setFormYearlyLastDayPolicy(rule.monthPolicy === 'skip' ? 'skip' : 'lastDay');
     const isYearlyLunar = !!(rule.lunarMonths && rule.lunarMonths.length > 0);
     setFormLunarMode(isYearlyLunar ? 'yearly' : 'monthly');
     setFormLunarMonths(rule.lunarMonths ? [...rule.lunarMonths] : []);
@@ -205,6 +231,17 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     const cleanTime = formTime.trim() || '09:00';
     const cleanDeadline = formDeadline.trim() || '23:59';
 
+    const finalSolarMonths =
+      formFrequency === 'yearly' ? (formSolarMonths.length > 0 ? formSolarMonths : [1]) : [];
+    const finalMonthdays =
+      formFrequency === 'yearly'
+        ? formYearlyDays.length > 0
+          ? formYearlyDays
+          : [1]
+        : formFrequency === 'monthly'
+          ? parsedMonthDays
+          : [];
+
     const finalLunarMonths =
       formFrequency === 'lunar' && formLunarMode === 'yearly'
         ? formLunarMonths.length > 0
@@ -235,7 +272,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         solarTermLimit: parsedSolarTermLimit,
         remindAdvanceDays: parsedAdvanceDays > 0 ? parsedAdvanceDays : undefined,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
-        monthdays: formFrequency === 'monthly' ? parsedMonthDays : [],
+        solarMonths: finalSolarMonths,
+        monthdays: finalMonthdays,
+        monthPolicy: formFrequency === 'yearly' ? formYearlyLastDayPolicy : editingRule.monthPolicy || 'skip',
         lunarMonths: finalLunarMonths,
         lunarMonthdays: finalLunarDays,
         lunarIncludeLeapMonth: formFrequency === 'lunar' ? formLunarIncludeLeap : false,
@@ -266,7 +305,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         solarTermLimit: parsedSolarTermLimit,
         remindAdvanceDays: parsedAdvanceDays > 0 ? parsedAdvanceDays : undefined,
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
-        monthdays: formFrequency === 'monthly' ? parsedMonthDays : [],
+        solarMonths: finalSolarMonths,
+        monthdays: finalMonthdays,
+        monthPolicy: formFrequency === 'yearly' ? formYearlyLastDayPolicy : 'skip',
         lunarMonths: finalLunarMonths,
         lunarMonthdays: finalLunarDays,
         lunarIncludeLeapMonth: formFrequency === 'lunar' ? formLunarIncludeLeap : false,
@@ -397,6 +438,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
             <option value="daily">每日 (daily)</option>
             <option value="weekly">每周 (weekly)</option>
             <option value="monthly">公历每月 (monthly)</option>
+            <option value="yearly">公历每年 (yearly)</option>
             <option value="lunar">农历每年/每月 (lunar)</option>
             <option value="solar">节气 (solar)</option>
             <option value="once">单次 (once)</option>
@@ -455,6 +497,12 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                             节气限{r.solarTermLimit}次
                           </span>
                         )}
+                        {r.frequency === 'yearly' && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-0.5">
+                            <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                            公历年度
+                          </span>
+                        )}
                         {r.frequency === 'lunar' && (
                           <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100/70 text-amber-800 border border-amber-300/60 flex items-center gap-0.5">
                             <Moon className="w-2.5 h-2.5 text-amber-600" />
@@ -481,6 +529,8 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                           {r.frequency === 'weekly' &&
                             `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
                           {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
+                          {r.frequency === 'yearly' &&
+                            formatGregorianYearlyText(r.monthdays, r.solarMonths)}
                           {r.frequency === 'lunar' &&
                             formatLunarScheduleText(r.lunarMonthdays, r.lunarMonths)}
                           {r.frequency === 'solar' &&
@@ -607,6 +657,12 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                               节气限{r.solarTermLimit}次
                             </span>
                           )}
+                          {r.frequency === 'yearly' && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-0.5">
+                              <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                              公历年度
+                            </span>
+                          )}
                           {r.frequency === 'lunar' && (
                             <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100/70 text-amber-800 border border-amber-300/60 flex items-center gap-0.5">
                               <Moon className="w-2.5 h-2.5 text-amber-600" />
@@ -637,6 +693,8 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                           {r.frequency === 'weekly' &&
                             `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
                           {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
+                          {r.frequency === 'yearly' &&
+                            formatGregorianYearlyText(r.monthdays, r.solarMonths)}
                           {r.frequency === 'lunar' &&
                             formatLunarScheduleText(r.lunarMonthdays, r.lunarMonths)}
                           {r.frequency === 'solar' &&
@@ -862,6 +920,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                     <option value="daily">每日 (daily)</option>
                     <option value="weekly">每周 (weekly)</option>
                     <option value="monthly">公历每月 (monthly)</option>
+                    <option value="yearly">公历每年 · 生日/纪念日 (yearly)</option>
                     <option value="lunar">农历每年/每月 (lunar)</option>
                     <option value="solar">中国二十四节气 (solar)</option>
                     <option value="once">单次 (once)</option>
@@ -1088,6 +1147,152 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                   />
                 </div>
               )}
+
+              {/* Gregorian Yearly Month & Day Selector (Solar Birthday / Anniversary) */}
+              {formFrequency === 'yearly' && (() => {
+                const effectiveMonths = formSolarMonths.length > 0 ? formSolarMonths : [1];
+                const effectiveDays = formYearlyDays.length > 0 ? formYearlyDays : [1];
+                const previewBase = formStartDate && formStartDate > currentDate ? formStartDate : currentDate;
+                const nextMatch = getNextGregorianYearlyMatchDate(
+                  previewBase,
+                  effectiveDays,
+                  effectiveMonths,
+                  formYearlyLastDayPolicy
+                );
+                const advNum = Math.max(0, Math.min(90, parseInt(formRemindAdvanceDays, 10) || 0));
+                const remindStart = nextMatch && advNum > 0 ? addDays(nextMatch.solarDate, -advNum) : null;
+
+                return (
+                  <div className="p-3 bg-rose-50/60 border border-rose-200 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <label className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-rose-600" />
+                        公历年度日期设定（生日 / 纪念日 / 年费）
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-rose-700 font-medium">快速选月日:</span>
+                        <input
+                          type="date"
+                          onChange={(e) => {
+                            if (!e.target.value) return;
+                            const parts = e.target.value.split('-');
+                            const m = parseInt(parts[1], 10);
+                            const d = parseInt(parts[2], 10);
+                            if (m >= 1 && m <= 12) setFormSolarMonths([m]);
+                            if (d >= 1 && d <= 31) setFormYearlyDays([d]);
+                          }}
+                          className="px-2 py-0.5 bg-white border border-rose-200 rounded-lg text-[11px] text-slate-700 focus:outline-hidden"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 12 Months Grid */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-rose-900">
+                          1. 选择公历月份（支持单选或多选）：
+                        </span>
+                        <span className="text-[10px] text-rose-700 font-medium">
+                          已选：{effectiveMonths.map((m) => `${m}月`).join('、')}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1">
+                        {Array.from({ length: 12 }, (_, idx) => idx + 1).map((monthNum) => {
+                          const isSelected = effectiveMonths.includes(monthNum);
+                          return (
+                            <button
+                              key={monthNum}
+                              type="button"
+                              onClick={() => {
+                                setFormSolarMonths((prev) => {
+                                  const base = prev.length > 0 ? prev : [1];
+                                  if (base.includes(monthNum)) {
+                                    return base.length > 1 ? base.filter((x) => x !== monthNum) : base;
+                                  }
+                                  return [...base, monthNum].sort((a, b) => a - b);
+                                });
+                              }}
+                              className={`py-1 text-[11px] font-medium rounded-lg border transition-colors ${
+                                isSelected
+                                  ? 'bg-rose-600 text-white border-rose-600 font-bold shadow-2xs'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-rose-50'
+                              }`}
+                            >
+                              {monthNum}月
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 31 Days Grid */}
+                    <div className="space-y-1.5">
+                      <span className="block text-[11px] font-semibold text-rose-900">
+                        2. 选择公历日期（如生日 20日）：
+                      </span>
+                      <div className="grid grid-cols-7 sm:grid-cols-11 gap-1">
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
+                          const isSelected = effectiveDays.includes(d);
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => {
+                                setFormYearlyDays((prev) => {
+                                  const base = prev.length > 0 ? prev : [1];
+                                  if (base.includes(d)) {
+                                    return base.length > 1 ? base.filter((x) => x !== d) : base;
+                                  }
+                                  return [...base, d].sort((a, b) => a - b);
+                                });
+                              }}
+                              className={`py-1 text-[10px] font-medium rounded-lg border transition-colors ${
+                                isSelected
+                                  ? 'bg-rose-600 text-white border-rose-600 font-bold shadow-2xs'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-rose-50'
+                              }`}
+                            >
+                              {d}日
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Feb 29 / Small Month Policy */}
+                    <div className="pt-1 border-t border-rose-200/70">
+                      <label className="flex items-center gap-1.5 text-[11px] text-rose-950 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formYearlyLastDayPolicy === 'lastDay'}
+                          onChange={(e) => setFormYearlyLastDayPolicy(e.target.checked ? 'lastDay' : 'skip')}
+                          className="rounded border-rose-300 text-rose-600 focus:ring-rose-500"
+                        />
+                        <span>遇非闰年2月29日或小月无31日时，自动顺延至当月最后一天（如2月28日）提醒</span>
+                      </label>
+                    </div>
+
+                    {/* Live Next Occurrence Preview */}
+                    {nextMatch && (
+                      <div className="p-2.5 bg-white/90 border border-rose-200 rounded-xl text-[11px] text-rose-950 space-y-0.5">
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <span className="font-bold text-rose-800">
+                            📅 下一次公历正日：{nextMatch.solarDate}（{formatGregorianYearlyText(effectiveDays, effectiveMonths)}）
+                          </span>
+                          <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-rose-100 text-rose-800">
+                            {nextMatch.daysAway === 0 ? '就在基准日当天' : `距基准日还有 ${nextMatch.daysAway} 天`}
+                          </span>
+                        </div>
+                        {remindStart && (
+                          <div className="text-[10px] text-sky-700 font-medium">
+                            🔔 已设提前 {advNum} 天提醒：将从 <strong>{remindStart}</strong> 起开始在待办清单显示倒计时
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Lunar Day & Month Selector (Supports Yearly Birthday/Anniversary & Monthly Recurring) */}
               {formFrequency === 'lunar' && (() => {

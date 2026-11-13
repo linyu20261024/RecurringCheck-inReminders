@@ -90,14 +90,23 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       deadline: r.deadline || '23:59',
       timeSensitive: isTimeSensitive,
       weekdays: Array.isArray(r.weekdays) ? r.weekdays : [],
-      monthdays: Array.isArray(r.monthdays) ? r.monthdays : [],
+      monthdays: Array.isArray(r.monthdays) && r.monthdays.length > 0
+        ? r.monthdays
+        : typeof r.yearDay === 'number' && r.frequency === 'yearly'
+          ? [r.yearDay]
+          : [],
+      solarMonths: Array.isArray(r.solarMonths)
+        ? r.solarMonths
+        : typeof r.yearMonth === 'number' && r.frequency === 'yearly'
+          ? [r.yearMonth]
+          : [],
       lunarMonthdays: Array.isArray(r.lunarMonthdays) ? r.lunarMonthdays : [],
       lunarMonths: Array.isArray(r.lunarMonths) ? r.lunarMonths : [],
       lunarIncludeLeapMonth: !!r.lunarIncludeLeapMonth,
       lunarLastDayPolicy: r.lunarLastDayPolicy === 'skip' ? 'skip' : 'lastDay',
       remindAdvanceDays: typeof r.remindAdvanceDays === 'number' && r.remindAdvanceDays > 0 ? Math.floor(r.remindAdvanceDays) : undefined,
       solarTerms: Array.isArray(r.solarTerms) ? r.solarTerms : [],
-      monthPolicy: r.monthPolicy || 'skip',
+      monthPolicy: r.monthPolicy || (r.frequency === 'yearly' ? 'lastDay' : 'skip'),
       intervalN: typeof r.intervalN === 'number' ? r.intervalN : 1,
       unit: r.unit || 'day',
       amount: typeof r.amount === 'number' ? r.amount : 0,
@@ -440,6 +449,32 @@ export function isBaseRuleExactDateMatch(rule: TaskRule, dateStr: string): boole
       return dayOfMonth === 1;
     }
 
+    case 'yearly': {
+      const month = date.getMonth() + 1;
+      const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+      const targetMonths =
+        rule.solarMonths && rule.solarMonths.length > 0
+          ? rule.solarMonths
+          : typeof rule.yearMonth === 'number'
+            ? [rule.yearMonth]
+            : [1];
+      if (!targetMonths.includes(month)) return false;
+
+      const targetDays =
+        rule.monthdays && rule.monthdays.length > 0
+          ? rule.monthdays
+          : typeof rule.yearDay === 'number'
+            ? [rule.yearDay]
+            : [1];
+
+      if (targetDays.includes(dayOfMonth)) return true;
+      const policy = rule.monthPolicy || 'lastDay';
+      if (policy === 'lastDay' && dayOfMonth === daysInMonth && targetDays.some((d) => d > daysInMonth)) {
+        return true;
+      }
+      return false;
+    }
+
     case 'lunar':
       return isLunarRuleMatched(
         dateStr,
@@ -480,6 +515,47 @@ export function isBaseRuleExactDateMatch(rule: TaskRule, dateStr: string): boole
     default:
       return true;
   }
+}
+
+export function formatGregorianYearlyText(monthdays?: number[], solarMonths?: number[]): string {
+  const months = solarMonths && solarMonths.length > 0 ? solarMonths : [1];
+  const days = monthdays && monthdays.length > 0 ? monthdays : [1];
+  const monthsText = months.map((m) => `${m}月`).join('、');
+  const daysText = days.map((d) => `${d}日`).join('、');
+  return `每年公历 ${monthsText} ${daysText}`;
+}
+
+export function getNextGregorianYearlyMatchDate(
+  fromDateStr: string,
+  monthdays?: number[],
+  solarMonths?: number[],
+  monthPolicy: 'skip' | 'lastDay' = 'lastDay'
+): { solarDate: string; daysAway: number } | null {
+  const months = solarMonths && solarMonths.length > 0 ? solarMonths : [1];
+  const days = monthdays && monthdays.length > 0 ? monthdays : [1];
+  if (months.length === 0 || days.length === 0) return null;
+
+  const base = new Date(`${fromDateStr}T12:00:00`);
+  for (let i = 0; i <= 400; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const dayOfMonth = d.getDate();
+    if (!months.includes(m)) continue;
+
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const matched =
+      days.includes(dayOfMonth) ||
+      (monthPolicy === 'lastDay' && dayOfMonth === daysInMonth && days.some((target) => target > daysInMonth));
+    if (matched) {
+      return {
+        solarDate: formatDate(d),
+        daysAway: i,
+      };
+    }
+  }
+  return null;
 }
 
 // Check if a rule is scheduled for a given date string (YYYY-MM-DD), returning targetDate & countdown days

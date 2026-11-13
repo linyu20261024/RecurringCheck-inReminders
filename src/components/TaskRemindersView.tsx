@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { TaskRecord, TaskRule, AppDataBackup } from '../types';
-import { getTodayString } from '../services/dataStorage';
+import { getTodayString, formatGregorianYearlyText } from '../services/dataStorage';
 import { getLunarDateInfo, getWeekDateRange, formatLunarScheduleText } from '../services/lunarCalendar';
 import { QuickCheckInModal } from './QuickCheckInModal';
 import {
@@ -889,6 +889,17 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                   </span>
                                 )}
 
+                                {/* Yearly Gregorian Frequency indicator */}
+                                {rule?.frequency === 'yearly' && (
+                                  <span
+                                    className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-rose-50 text-rose-700 border border-rose-200/70 flex items-center gap-0.5"
+                                    title={formatGregorianYearlyText(rule.monthdays, rule.solarMonths)}
+                                  >
+                                    <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                                    公历年度
+                                  </span>
+                                )}
+
                                 {/* Lunar Frequency indicator */}
                                 {rule?.frequency === 'lunar' && (
                                   <span
@@ -911,7 +922,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                   </span>
                                 )}
                                 {rec.daysUntilTarget === 0 &&
-                                  ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) || rule?.frequency === 'lunar') && (
+                                  ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) ||
+                                    rule?.frequency === 'lunar' ||
+                                    rule?.frequency === 'yearly') && (
                                     <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-0.5">
                                       🎯 今日正日
                                     </span>
@@ -1079,6 +1092,16 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                 </span>
                               )}
 
+                              {rule?.frequency === 'yearly' && (
+                                <span
+                                  className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-rose-50 text-rose-700 border border-rose-200/70 flex items-center gap-0.5"
+                                  title={formatGregorianYearlyText(rule.monthdays, rule.solarMonths)}
+                                >
+                                  <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                                  公历年度
+                                </span>
+                              )}
+
                               {rule?.frequency === 'lunar' && (
                                 <span
                                   className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5"
@@ -1096,7 +1119,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                 </span>
                               )}
                               {rec.daysUntilTarget === 0 &&
-                                ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) || rule?.frequency === 'lunar') && (
+                                ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) ||
+                                  rule?.frequency === 'lunar' ||
+                                  rule?.frequency === 'yearly') && (
                                   <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
                                     🎯 今日正日
                                   </span>
@@ -1200,6 +1225,16 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                         </span>
                       )}
 
+                      {rule?.frequency === 'yearly' && (
+                        <span
+                          className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-rose-50 text-rose-700 border border-rose-200/70 flex items-center gap-0.5"
+                          title={formatGregorianYearlyText(rule.monthdays, rule.solarMonths)}
+                        >
+                          <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                          公历年度
+                        </span>
+                      )}
+
                       {rule?.frequency === 'lunar' && (
                         <span
                           className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5"
@@ -1217,7 +1252,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                         </span>
                       )}
                       {rec.daysUntilTarget === 0 &&
-                        ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) || rule?.frequency === 'lunar') && (
+                        ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) ||
+                          rule?.frequency === 'lunar' ||
+                          rule?.frequency === 'yearly') && (
                           <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
                             🎯 今日正日
                           </span>
