@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { TaskRecord, TaskRule, AppDataBackup } from '../types';
 import { getTodayString } from '../services/dataStorage';
-import { getLunarDateInfo, getWeekDateRange } from '../services/lunarCalendar';
+import { getLunarDateInfo, getWeekDateRange, formatLunarScheduleText } from '../services/lunarCalendar';
 import { QuickCheckInModal } from './QuickCheckInModal';
 import {
   CheckCircle2,
@@ -22,6 +22,7 @@ import {
   CalendarOff,
   Moon,
   Sparkles,
+  Bell,
 } from 'lucide-react';
 
 interface TaskRemindersViewProps {
@@ -293,9 +294,14 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
       received: isNowDone && defaultActual > 0,
     };
 
-    // If it's a monthly limit rule and user completed it, auto-skip future days in this month
-    const autoSkipMonthly = isNowDone && !!rule?.monthlyLimit && rule.monthlyLimit > 0;
-    onUpdateRecord(updated, autoSkipMonthly);
+    // If it's a period limit or advance-reminder rule and user completed it, auto-skip remaining reminders in this cycle
+    const autoSkipPeriod =
+      isNowDone &&
+      ((!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
+        (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
+        (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+        (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0));
+    onUpdateRecord(updated, autoSkipPeriod);
   };
 
   // Batch complete all pending in a platform
@@ -885,11 +891,31 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
 
                                 {/* Lunar Frequency indicator */}
                                 {rule?.frequency === 'lunar' && (
-                                  <span className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5">
+                                  <span
+                                    className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5"
+                                    title={formatLunarScheduleText(rule.lunarMonthdays, rule.lunarMonths)}
+                                  >
                                     <Moon className="w-2.5 h-2.5 text-amber-600" />
-                                    农历
+                                    {rule.lunarMonths && rule.lunarMonths.length > 0 ? '农历年度' : '农历'}
                                   </span>
                                 )}
+
+                                {/* Advance Reminder / Target Date Countdown Badge */}
+                                {rec.daysUntilTarget !== undefined && rec.daysUntilTarget > 0 && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-0.5"
+                                    title={`正日日期为 ${rec.targetDate}，当前处于提前提醒期内`}
+                                  >
+                                    <Bell className="w-2.5 h-2.5 text-sky-600 shrink-0" />
+                                    提前提醒 · 距正日({(rec.targetDate || '').slice(5)})还有 {rec.daysUntilTarget} 天
+                                  </span>
+                                )}
+                                {rec.daysUntilTarget === 0 &&
+                                  ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) || rule?.frequency === 'lunar') && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-0.5">
+                                      🎯 今日正日
+                                    </span>
+                                  )}
                               </div>
 
                               {/* App Internal Path Guidance */}
@@ -1049,9 +1075,32 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
 
                               {rule?.monthlyLimit && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
-                                  月限1次
+                                  月限{rule.monthlyLimit}次
                                 </span>
                               )}
+
+                              {rule?.frequency === 'lunar' && (
+                                <span
+                                  className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5"
+                                  title={formatLunarScheduleText(rule.lunarMonthdays, rule.lunarMonths)}
+                                >
+                                  <Moon className="w-2.5 h-2.5 text-amber-600" />
+                                  {rule.lunarMonths && rule.lunarMonths.length > 0 ? '农历年度' : '农历'}
+                                </span>
+                              )}
+
+                              {rec.daysUntilTarget !== undefined && rec.daysUntilTarget > 0 && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-0.5">
+                                  <Bell className="w-2.5 h-2.5 text-sky-600 shrink-0" />
+                                  距正日({(rec.targetDate || '').slice(5)})还有 {rec.daysUntilTarget} 天
+                                </span>
+                              )}
+                              {rec.daysUntilTarget === 0 &&
+                                ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) || rule?.frequency === 'lunar') && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    🎯 今日正日
+                                  </span>
+                                )}
                             </div>
                             {(rec.path || rule?.path) && (
                               <p className="text-[11px] text-slate-500 font-mono truncate mt-0.5">
@@ -1147,9 +1196,32 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
 
                       {rule?.monthlyLimit && (
                         <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
-                          月限1次
+                          月限{rule.monthlyLimit}次
                         </span>
                       )}
+
+                      {rule?.frequency === 'lunar' && (
+                        <span
+                          className="text-[10px] font-medium px-1.5 py-0.2 rounded-md bg-amber-100/70 text-amber-800 flex items-center gap-0.5"
+                          title={formatLunarScheduleText(rule.lunarMonthdays, rule.lunarMonths)}
+                        >
+                          <Moon className="w-2.5 h-2.5 text-amber-600" />
+                          {rule.lunarMonths && rule.lunarMonths.length > 0 ? '农历年度' : '农历'}
+                        </span>
+                      )}
+
+                      {rec.daysUntilTarget !== undefined && rec.daysUntilTarget > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-0.5">
+                          <Bell className="w-2.5 h-2.5 text-sky-600 shrink-0" />
+                          距正日({(rec.targetDate || '').slice(5)})还有 {rec.daysUntilTarget} 天
+                        </span>
+                      )}
+                      {rec.daysUntilTarget === 0 &&
+                        ((rule?.remindAdvanceDays && rule.remindAdvanceDays > 0) || rule?.frequency === 'lunar') && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            🎯 今日正日
+                          </span>
+                        )}
                     </div>
                     {(rec.path || rule?.path) && (
                       <p className="text-[11px] text-slate-400 font-mono truncate">{rec.path || rule?.path}</p>

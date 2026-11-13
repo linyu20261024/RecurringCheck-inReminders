@@ -8,7 +8,7 @@ import { AppDataBackup, TaskRecord, TaskRule } from './types';
 import {
   loadInitialData,
   saveDataToLocalStorage,
-  isRuleScheduledForDate,
+  getRuleScheduleMatchForDate,
   deleteRuleAndPendingRecords,
   skipFutureMonthlyLimitRecords,
   syncRuleToPendingRecords,
@@ -63,32 +63,37 @@ export default function App() {
       data.records.filter((r) => r.date === currentDate).map((r) => r.ruleId)
     );
 
-    const missingRules = data.rules.filter(
-      (rule) => rule.active && isRuleScheduledForDate(rule, currentDate, data.records) && !existingRecordRuleIds.has(rule.id)
-    );
+    const newRecords: TaskRecord[] = [];
+    for (const r of data.rules) {
+      if (!r.active || existingRecordRuleIds.has(r.id)) continue;
+      const match = getRuleScheduleMatchForDate(r, currentDate, data.records);
+      if (match.matched) {
+        newRecords.push({
+          id: `${r.id}_${currentDate}`,
+          ruleId: r.id,
+          name: r.name,
+          platform: r.platform,
+          category: r.category,
+          date: currentDate,
+          time: r.time || '09:00',
+          deadline: r.deadline || '23:59',
+          timeSensitive: !!r.timeSensitive,
+          targetDate: match.targetDate,
+          daysUntilTarget: match.daysUntilTarget,
+          expected: r.amount || 0,
+          currency: r.currency,
+          status: 'pending',
+          actual: 0,
+          received: false,
+          path: r.path,
+          notes: r.notes,
+          priority: r.priority,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
 
-    if (missingRules.length > 0) {
-      const newRecords: TaskRecord[] = missingRules.map((r) => ({
-        id: `${r.id}_${currentDate}`,
-        ruleId: r.id,
-        name: r.name,
-        platform: r.platform,
-        category: r.category,
-        date: currentDate,
-        time: r.time || '09:00',
-        deadline: r.deadline || '23:59',
-        timeSensitive: !!r.timeSensitive,
-        expected: r.amount || 0,
-        currency: r.currency,
-        status: 'pending',
-        actual: 0,
-        received: false,
-        path: r.path,
-        notes: r.notes,
-        priority: r.priority,
-        createdAt: new Date().toISOString(),
-      }));
-
+    if (newRecords.length > 0) {
       setData((prev) => {
         if (!prev) return prev;
         const updated: AppDataBackup = {
@@ -101,7 +106,7 @@ export default function App() {
     }
   }, [currentDate, data?.rules]);
 
-  // Update a single record (supports auto-skipping remaining days in period when weekly/monthly/solar limit reached)
+  // Update a single record (supports auto-skipping remaining days in period when weekly/monthly/solar limit or advance reminder reached)
   const handleUpdateRecord = useCallback((updated: TaskRecord, skipRestOfPeriod?: boolean) => {
     setData((prev) => {
       if (!prev) return prev;
@@ -119,12 +124,18 @@ export default function App() {
       const hasAnyCap =
         (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
         (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
-        (!!rule?.solarTermLimit && rule.solarTermLimit > 0);
+        (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+        (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
 
       const shouldSkipFuture = skipRestOfPeriod || (updated.status === 'done' && hasAnyCap);
 
       if (shouldSkipFuture) {
-        nextData = skipFutureMonthlyLimitRecords(nextData, updated.ruleId, updated.date);
+        nextData = skipFutureMonthlyLimitRecords(
+          nextData,
+          updated.ruleId,
+          updated.date,
+          updated.targetDate
+        );
       } else {
         saveDataToLocalStorage(nextData);
       }
@@ -225,9 +236,9 @@ export default function App() {
 
       {/* Main Content Area: dense padding on mobile for maximum viewport efficiency */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 sm:px-6 lg:px-8 py-2.5 sm:py-6">
-        {hasData ? (
+        {hasData || activeTab === 'rules' ? (
           <>
-            {activeTab === 'tasks' && (
+            {hasData && activeTab === 'tasks' && (
               <TaskRemindersView
                 data={data!}
                 currentDate={currentDate}
@@ -239,12 +250,12 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'analytics' && <AnalyticsView data={data!} />}
+            {hasData && activeTab === 'analytics' && <AnalyticsView data={data!} />}
 
             {activeTab === 'rules' && (
               <RuleManagerView
-                rules={data!.rules}
-                records={data!.records}
+                rules={data?.rules || []}
+                records={data?.records || []}
                 currentDate={currentDate}
                 onAddRule={handleAddRule}
                 onUpdateRule={handleUpdateRule}

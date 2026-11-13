@@ -27,6 +27,12 @@ declare module 'lunar-javascript' {
     toFullString(): string;
   }
 
+  export class LunarMonth {
+    static fromYm(lunarYear: number, lunarMonth: number): LunarMonth | null;
+    getDayCount(): number;
+    isLeap(): boolean;
+  }
+
   export class JieQi {
     getName(): string;
     getSolar(): Solar;

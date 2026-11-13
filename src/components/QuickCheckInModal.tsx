@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TaskRecord, TaskRule } from '../types';
 import { evaluateFormula } from '../services/dataStorage';
-import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, CalendarOff } from 'lucide-react';
+import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, CalendarOff, Bell } from 'lucide-react';
 
 interface QuickCheckInModalProps {
   record: TaskRecord;
@@ -64,11 +64,17 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
       completedAt: status === 'done' ? (record.completedAt || now) : undefined,
       received: status === 'done' && num > 0,
     };
-    onSave(updated, rule?.monthlyLimit ? skipRestOfMonth : false);
+    const shouldAutoSkip =
+      !!rule?.monthlyLimit ||
+      !!rule?.weeklyLimit ||
+      !!rule?.solarTermLimit ||
+      (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
+    onSave(updated, shouldAutoSkip ? skipRestOfMonth : false);
     onClose();
   };
 
   const isMonthlyLimitRule = !!rule?.monthlyLimit && rule.monthlyLimit > 0;
+  const isAdvanceReminderRule = !!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-xs p-0 sm:p-4">
@@ -120,7 +126,19 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
 
               {rule?.frequency === 'lunar' && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 border border-amber-300/60">
-                  农历周期
+                  {rule.lunarMonths && rule.lunarMonths.length > 0 ? '农历年度周期' : '农历周期'}
+                </span>
+              )}
+
+              {record.daysUntilTarget !== undefined && record.daysUntilTarget > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-0.5">
+                  <Bell className="w-2.5 h-2.5 text-sky-600" />
+                  提前提醒 · 距正日({(record.targetDate || '').slice(5)})还有 {record.daysUntilTarget} 天
+                </span>
+              )}
+              {record.daysUntilTarget === 0 && (isAdvanceReminderRule || rule?.frequency === 'lunar') && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  🎯 今日正日
                 </span>
               )}
             </div>
@@ -234,13 +252,13 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                   type="text"
                   value={formulaExpr}
                   onChange={(e) => handleFormulaChange(e.target.value)}
-                  placeholder="例: 0.8*2 或 微信摇到0.5元"
+                  placeholder="例如: 0.8*2 或 实收明细备注"
                   className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
 
-              {/* Monthly Limit Feature: Option to auto-skip rest of month */}
-              {isMonthlyLimitRule && (
+              {/* Monthly Limit / Advance Reminder: Option to auto-skip remaining cycle */}
+              {(isMonthlyLimitRule || isAdvanceReminderRule) && (
                 <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-xl">
                   <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900">
                     <input
@@ -250,9 +268,15 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                       className="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
                     />
                     <div>
-                      <span className="font-semibold block">本月已完成，后续日期自动免提醒</span>
+                      <span className="font-semibold block">
+                        {isAdvanceReminderRule && !isMonthlyLimitRule
+                          ? '已提前办理完成，本轮正日前自动免提醒'
+                          : '本月已完成，后续日期自动免提醒'}
+                      </span>
                       <span className="text-[11px] text-amber-700 leading-tight block mt-0.5">
-                        该任务限制每个自然月完成 1 次。勾选后将自动跳过本月后续所有周期的待办提醒。
+                        {isAdvanceReminderRule && !isMonthlyLimitRule
+                          ? '勾选后，距本次目标正日前的其余提前提醒日将自动跳过，不再重复弹出。'
+                          : `该任务限制每个自然月完成 ${rule?.monthlyLimit} 次。勾选后将自动跳过本月后续周期的待办提醒。`}
                       </span>
                     </div>
                   </label>

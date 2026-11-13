@@ -3,7 +3,7 @@
  * Powered by lunar-javascript
  */
 
-import { Solar, Lunar } from 'lunar-javascript';
+import { Solar, LunarMonth } from 'lunar-javascript';
 
 // 24 Solar Terms standard names in Chinese calendar chronological order starting with 立春
 export const ALL_SOLAR_TERMS = [
@@ -34,6 +34,7 @@ export interface LunarDateInfo {
   lunarMonth: number;          // 1..12 (positive; if leap month, isLeap will be true)
   lunarDay: number;            // 1..30
   isLeapMonth: boolean;
+  monthDayCount: number;       // 29 or 30
   yearGanZhi: string;          // e.g. "丙午"
   yearShengXiao: string;       // e.g. "马"
   monthInChinese: string;      // e.g. "十月" or "闰六月"
@@ -49,10 +50,16 @@ export interface LunarDateInfo {
   };
 }
 
+// In-memory cache for fast repeated lookups of YYYY-MM-DD
+const lunarInfoCache = new Map<string, LunarDateInfo>();
+
 /**
  * Get full Lunar and Solar Term details for any given YYYY-MM-DD solar date
  */
 export function getLunarDateInfo(dateStr: string): LunarDateInfo {
+  const cached = lunarInfoCache.get(dateStr);
+  if (cached) return cached;
+
   const parts = dateStr.split('-');
   const y = parseInt(parts[0], 10);
   const m = parseInt(parts[1], 10);
@@ -81,17 +88,23 @@ export function getLunarDateInfo(dateStr: string): LunarDateInfo {
   const d2 = String(nextDateObj.getDate()).padStart(2, '0');
   const curJqEnd = `${y2}-${m2}-${d2}`;
 
-  const isLeap = lunar.getMonth() < 0;
-  const absMonth = Math.abs(lunar.getMonth());
+  const rawMonth = lunar.getMonth();
+  const isLeap = rawMonth < 0;
+  const absMonth = Math.abs(rawMonth);
+  const lunarYear = lunar.getYear();
+  const lm = LunarMonth.fromYm(lunarYear, rawMonth);
+  const monthDayCount = lm ? lm.getDayCount() : 30;
+
   const monthName = (isLeap ? '闰' : '') + lunar.getMonthInChinese() + '月';
   const dayName = lunar.getDayInChinese();
 
-  return {
+  const info: LunarDateInfo = {
     solarDate: dateStr,
-    lunarYear: lunar.getYear(),
+    lunarYear,
     lunarMonth: absMonth,
     lunarDay: lunar.getDay(),
     isLeapMonth: isLeap,
+    monthDayCount,
     yearGanZhi: lunar.getYearInGanZhi(),
     yearShengXiao: lunar.getYearShengXiao(),
     monthInChinese: monthName,
@@ -106,6 +119,12 @@ export function getLunarDateInfo(dateStr: string): LunarDateInfo {
       nextStartDate: nextJqStart,
     },
   };
+
+  if (lunarInfoCache.size > 2000) {
+    lunarInfoCache.clear();
+  }
+  lunarInfoCache.set(dateStr, info);
+  return info;
 }
 
 /**
@@ -138,19 +157,93 @@ export function getWeekDateRange(dateStr: string): { startOfWeek: string; endOfW
 /**
  * Check if a date string matches a Lunar rule requirement
  * - lunarMonthdays: array of lunar days (1..30)
- * - lunarMonths: optional specific lunar months (1..12), if empty, applies to every lunar month
+ * - lunarMonths: optional specific lunar months (1..12); if empty, applies to every lunar month
+ * - includeLeapMonth: whether leap months also trigger (default false for birthday scenarios)
+ * - lastDayPolicy: if target day (e.g. 30) doesn't exist in a 29-day lunar month, trigger on day 29 ('lastDay') or skip ('skip')
  */
 export function isLunarRuleMatched(
   dateStr: string,
   lunarMonthdays?: number[],
-  lunarMonths?: number[]
+  lunarMonths?: number[],
+  includeLeapMonth = false,
+  lastDayPolicy: 'skip' | 'lastDay' = 'lastDay'
 ): boolean {
   if (!lunarMonthdays || lunarMonthdays.length === 0) return false;
   const info = getLunarDateInfo(dateStr);
+
+  if (info.isLeapMonth && !includeLeapMonth) {
+    return false;
+  }
 
   if (lunarMonths && lunarMonths.length > 0) {
     if (!lunarMonths.includes(info.lunarMonth)) return false;
   }
 
-  return lunarMonthdays.includes(info.lunarDay);
+  if (lunarMonthdays.includes(info.lunarDay)) {
+    return true;
+  }
+
+  // Handle small lunar months (29 days) when user chose day 30 (三十)
+  if (
+    lastDayPolicy === 'lastDay' &&
+    info.lunarDay === info.monthDayCount &&
+    lunarMonthdays.some((d) => d > info.monthDayCount)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Find the next solar date (>= fromDateStr) that matches a Lunar rule, within next 400 days
+ */
+export function getNextLunarMatchDate(
+  fromDateStr: string,
+  lunarMonthdays?: number[],
+  lunarMonths?: number[],
+  includeLeapMonth = false,
+  lastDayPolicy: 'skip' | 'lastDay' = 'lastDay'
+): { solarDate: string; lunarInfo: LunarDateInfo; daysAway: number } | null {
+  if (!lunarMonthdays || lunarMonthdays.length === 0) return null;
+
+  const base = new Date(`${fromDateStr}T12:00:00`);
+  for (let i = 0; i <= 400; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const candidate = `${y}-${m}-${day}`;
+
+    if (isLunarRuleMatched(candidate, lunarMonthdays, lunarMonths, includeLeapMonth, lastDayPolicy)) {
+      return {
+        solarDate: candidate,
+        lunarInfo: getLunarDateInfo(candidate),
+        daysAway: i,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Format human-readable lunar schedule text (e.g. "每年农历 五月廿三" or "每月农历 初一、十五")
+ */
+export function formatLunarScheduleText(
+  lunarMonthdays?: number[],
+  lunarMonths?: number[]
+): string {
+  const daysText = (lunarMonthdays || [])
+    .map((d) => LUNAR_DAY_NAMES[d - 1] || `${d}日`)
+    .join('、');
+
+  if (lunarMonths && lunarMonths.length > 0) {
+    const monthsText = lunarMonths
+      .map((m) => LUNAR_MONTH_NAMES[m - 1] || `${m}月`)
+      .join('、');
+    return `每年农历 ${monthsText}${daysText ? ` ${daysText}` : ''}`;
+  }
+
+  return `每月农历 ${daysText || '初一'}`;
 }

@@ -452,7 +452,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                 type="text"
                 value={searchTableQuery}
                 onChange={(e) => setSearchTableQuery(e.target.value)}
-                placeholder="例: 每日签到、微信、还款..."
+                placeholder="例: 每日签到、生日、还款..."
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 py-2 pl-8 pr-3 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white"
               />
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />

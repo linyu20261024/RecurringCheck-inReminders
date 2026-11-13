@@ -93,6 +93,9 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       monthdays: Array.isArray(r.monthdays) ? r.monthdays : [],
       lunarMonthdays: Array.isArray(r.lunarMonthdays) ? r.lunarMonthdays : [],
       lunarMonths: Array.isArray(r.lunarMonths) ? r.lunarMonths : [],
+      lunarIncludeLeapMonth: !!r.lunarIncludeLeapMonth,
+      lunarLastDayPolicy: r.lunarLastDayPolicy === 'skip' ? 'skip' : 'lastDay',
+      remindAdvanceDays: typeof r.remindAdvanceDays === 'number' && r.remindAdvanceDays > 0 ? Math.floor(r.remindAdvanceDays) : undefined,
       solarTerms: Array.isArray(r.solarTerms) ? r.solarTerms : [],
       monthPolicy: r.monthPolicy || 'skip',
       intervalN: typeof r.intervalN === 'number' ? r.intervalN : 1,
@@ -126,6 +129,8 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       time: rec.time || rule?.time || '09:00',
       deadline: rec.deadline || rule?.deadline || '23:59',
       timeSensitive: rec.timeSensitive !== undefined ? !!rec.timeSensitive : !!rule?.timeSensitive,
+      targetDate: rec.targetDate,
+      daysUntilTarget: typeof rec.daysUntilTarget === 'number' ? rec.daysUntilTarget : undefined,
       plannedAt: rec.plannedAt,
       deadlineAt: rec.deadlineAt,
       expected: typeof rec.expected === 'number' ? rec.expected : (rule?.amount ?? 0),
@@ -141,6 +146,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       monthlyLimitReached: !!rec.monthlyLimitReached,
       weeklyLimitReached: !!rec.weeklyLimitReached,
       solarTermLimitReached: !!rec.solarTermLimitReached,
+      advanceDoneSkipped: !!rec.advanceDoneSkipped,
       createdAt: rec.createdAt,
     };
   });
@@ -193,7 +199,8 @@ export function syncRuleToPendingRecords(
         }
 
         // Check if rule is still scheduled for this date under the new rule schedule
-        if (!isRuleScheduledForDate(updatedRule, rec.date, data.records)) {
+        const match = getRuleScheduleMatchForDate(updatedRule, rec.date, data.records);
+        if (!match.matched) {
           removedPendingCount++;
           continue;
         }
@@ -210,6 +217,8 @@ export function syncRuleToPendingRecords(
           time: updatedRule.time || '09:00',
           deadline: updatedRule.deadline || '23:59',
           timeSensitive: !!updatedRule.timeSensitive,
+          targetDate: match.targetDate,
+          daysUntilTarget: match.daysUntilTarget,
           path: updatedRule.path,
           notes: updatedRule.notes,
           priority: updatedRule.priority,
@@ -397,20 +406,92 @@ export function analyzeTemplateOptimization(data: AppDataBackup): OptimizationDi
   };
 }
 
-// Check if a rule is scheduled for a given date string (YYYY-MM-DD)
-// Strictly honors startDate, endDate, weeklyLimit, monthlyLimit, solarTermLimit, and lunar/solar calculations
-export function isRuleScheduledForDate(
-  rule: TaskRule,
-  dateStr: string,
-  existingRecords?: TaskRecord[]
-): boolean {
-  if (!rule.active) return false;
-  if (rule.startDate && dateStr < rule.startDate) return false;
-  if (rule.endDate && dateStr > rule.endDate) return false;
+export interface RuleScheduleMatch {
+  matched: boolean;
+  targetDate?: string;
+  daysUntilTarget?: number;
+}
 
+// Evaluate whether dateStr is the exact trigger date of the rule (without advance window or period caps)
+export function isBaseRuleExactDateMatch(rule: TaskRule, dateStr: string): boolean {
   const date = new Date(`${dateStr}T12:00:00`);
   const dayOfWeek = date.getDay(); // 0 is Sunday
   const dayOfMonth = date.getDate();
+
+  switch (rule.frequency) {
+    case 'daily':
+      return true;
+
+    case 'weekly':
+      if (rule.weekdays && rule.weekdays.length > 0) {
+        return rule.weekdays.includes(dayOfWeek);
+      }
+      return true;
+
+    case 'monthly': {
+      const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+      if (rule.monthdays && rule.monthdays.length > 0) {
+        if (rule.monthdays.includes(dayOfMonth)) return true;
+        if (rule.monthPolicy === 'lastDay' && dayOfMonth === daysInMonth && rule.monthdays.some((d) => d > daysInMonth)) {
+          return true;
+        }
+        return false;
+      }
+      return dayOfMonth === 1;
+    }
+
+    case 'lunar':
+      return isLunarRuleMatched(
+        dateStr,
+        rule.lunarMonthdays,
+        rule.lunarMonths,
+        !!rule.lunarIncludeLeapMonth,
+        rule.lunarLastDayPolicy || 'lastDay'
+      );
+
+    case 'solar': {
+      const lunarInfo = getLunarDateInfo(dateStr);
+      const hasAdvance = !!rule.remindAdvanceDays && rule.remindAdvanceDays > 0;
+      if (rule.solarTerms && rule.solarTerms.length > 0) {
+        if (!hasAdvance && rule.solarTermLimit && rule.solarTermLimit > 0) {
+          if (lunarInfo.solarTerm && rule.solarTerms.includes(lunarInfo.solarTerm)) return true;
+          return rule.solarTerms.includes(lunarInfo.currentSolarTerm.name);
+        }
+        return !!lunarInfo.solarTerm && rule.solarTerms.includes(lunarInfo.solarTerm);
+      }
+      return !!lunarInfo.solarTerm;
+    }
+
+    case 'once':
+      return rule.startDate === dateStr;
+
+    case 'interval': {
+      if (!rule.startDate) return true;
+      const start = new Date(`${rule.startDate}T12:00:00`);
+      const diffDays = Math.round((date.getTime() - start.getTime()) / 86400000);
+      if (diffDays < 0) return false;
+      const step = Math.max(1, rule.intervalN || 1);
+      if (rule.unit === 'week') {
+        return diffDays % (step * 7) === 0;
+      }
+      return diffDays % step === 0;
+    }
+
+    default:
+      return true;
+  }
+}
+
+// Check if a rule is scheduled for a given date string (YYYY-MM-DD), returning targetDate & countdown days
+export function getRuleScheduleMatchForDate(
+  rule: TaskRule,
+  dateStr: string,
+  existingRecords?: TaskRecord[]
+): RuleScheduleMatch {
+  if (!rule.active) return { matched: false };
+  if (rule.startDate && dateStr < rule.startDate) return { matched: false };
+  if (rule.endDate && dateStr > rule.endDate) return { matched: false };
+
   const lunarInfo = getLunarDateInfo(dateStr);
 
   // 1. Weekly limit check: e.g. "周频次但每周只能做 1 次"
@@ -426,7 +507,7 @@ export function isRuleScheduledForDate(
     if (doneInWeek.length >= rule.weeklyLimit) {
       const isDoneOnThisDate = doneInWeek.some((r) => r.date === dateStr);
       if (!isDoneOnThisDate) {
-        return false; // Weekly limit reached!
+        return { matched: false };
       }
     }
   }
@@ -440,7 +521,7 @@ export function isRuleScheduledForDate(
     if (doneInMonth.length >= rule.monthlyLimit) {
       const isDoneOnThisDate = doneInMonth.some((r) => r.date === dateStr);
       if (!isDoneOnThisDate) {
-        return false; // Monthly limit reached!
+        return { matched: false };
       }
     }
   }
@@ -458,62 +539,61 @@ export function isRuleScheduledForDate(
     if (doneInSolarTerm.length >= rule.solarTermLimit) {
       const isDoneOnThisDate = doneInSolarTerm.some((r) => r.date === dateStr);
       if (!isDoneOnThisDate) {
-        return false; // Solar term limit reached for this 24-solar-term window!
+        return { matched: false };
       }
     }
   }
 
-  switch (rule.frequency) {
-    case 'daily':
-      return true;
+  // 4. Advance reminder window evaluation (0 = exact date only, N > 0 = check dateStr..dateStr+N)
+  const advanceDays = rule.frequency === 'daily' ? 0 : Math.max(0, Math.floor(rule.remindAdvanceDays || 0));
 
-    case 'weekly':
-      if (rule.weekdays && rule.weekdays.length > 0) {
-        return rule.weekdays.includes(dayOfWeek);
-      }
-      return true;
+  for (let offset = 0; offset <= advanceDays; offset++) {
+    const candidateTarget = offset === 0 ? dateStr : addDays(dateStr, offset);
+    if (rule.endDate && candidateTarget > rule.endDate) continue;
 
-    case 'monthly':
-      if (rule.monthdays && rule.monthdays.length > 0) {
-        return rule.monthdays.includes(dayOfMonth);
-      }
-      return dayOfMonth === 1;
-
-    case 'lunar':
-      // Chinese Lunar Date support (e.g. 每逢农历初一、十五，或者特定农历月特定农历日)
-      return isLunarRuleMatched(dateStr, rule.lunarMonthdays, rule.lunarMonths);
-
-    case 'solar':
-      // Chinese 24 Solar Terms (中国二十四节气)
-      // Check if this date falls on a selected solar term
-      if (rule.solarTerms && rule.solarTerms.length > 0) {
-        // If specified specific solar terms, check if today is the solar term or within the term
-        // If today is the solar term entrance day
-        if (lunarInfo.solarTerm && rule.solarTerms.includes(lunarInfo.solarTerm)) {
-          return true;
+    if (isBaseRuleExactDateMatch(rule, candidateTarget)) {
+      // If this exact target occurrence was already marked done in the advance window, suppress repeating reminders
+      if (existingRecords && advanceDays > 0) {
+        const windowStart = addDays(candidateTarget, -advanceDays);
+        const doneForCycle = existingRecords.filter(
+          (r) =>
+            r.ruleId === rule.id &&
+            r.status === 'done' &&
+            (r.targetDate === candidateTarget ||
+              (!r.targetDate && r.date >= windowStart && r.date <= candidateTarget))
+        );
+        if (doneForCycle.length > 0 && !doneForCycle.some((r) => r.date === dateStr)) {
+          continue;
         }
-        // If rule specifies active solar term window
-        return rule.solarTerms.includes(lunarInfo.currentSolarTerm.name);
       }
-      // If no specific solar terms selected, defaults to all 24 solar terms (active each solar term day)
-      return !!lunarInfo.solarTerm;
 
-    case 'once':
-      return rule.startDate === dateStr;
-
-    case 'interval':
-      return true;
-
-    default:
-      return true;
+      return {
+        matched: true,
+        targetDate: candidateTarget,
+        daysUntilTarget: offset,
+      };
+    }
   }
+
+  return { matched: false };
 }
 
-// Automatically skip or suppress subsequent pending records of a rule when a limit (monthly / weekly / solar term) is fulfilled
+// Check if a rule is scheduled for a given date string (YYYY-MM-DD)
+// Strictly honors startDate, endDate, advance reminders, weeklyLimit, monthlyLimit, solarTermLimit, and lunar/solar calculations
+export function isRuleScheduledForDate(
+  rule: TaskRule,
+  dateStr: string,
+  existingRecords?: TaskRecord[]
+): boolean {
+  return getRuleScheduleMatchForDate(rule, dateStr, existingRecords).matched;
+}
+
+// Automatically skip or suppress subsequent pending records of a rule when a limit or advance-reminder cycle is fulfilled
 export function skipFutureLimitRecords(
   data: AppDataBackup,
   ruleId: string,
-  completedDate: string
+  completedDate: string,
+  completedTargetDate?: string
 ): AppDataBackup {
   const rule = data.rules.find((r) => r.id === ruleId);
   if (!rule) return data;
@@ -527,6 +607,24 @@ export function skipFutureLimitRecords(
 
   const newRecords = data.records.map((rec) => {
     if (rec.ruleId === ruleId && rec.status === 'pending' && rec.date > completedDate) {
+      // 0. Check advance-reminder cycle completion
+      if (
+        rule.remindAdvanceDays &&
+        rule.remindAdvanceDays > 0 &&
+        ((completedTargetDate && rec.targetDate === completedTargetDate) ||
+          (completedTargetDate && rec.date <= completedTargetDate))
+      ) {
+        changed = true;
+        return {
+          ...rec,
+          status: 'skipped' as const,
+          advanceDoneSkipped: true,
+          feedback: rec.feedback
+            ? `${rec.feedback} (已提前完成)`
+            : `已于 ${completedDate} 提前完成，本轮免提醒`,
+        };
+      }
+
       // 1. Check weekly limit
       if (rule.weeklyLimit && rule.weeklyLimit > 0) {
         if (rec.date >= startOfWeek && rec.date <= endOfWeek) {
@@ -586,8 +684,9 @@ export function skipFutureLimitRecords(
 export function skipFutureMonthlyLimitRecords(
   data: AppDataBackup,
   ruleId: string,
-  completedDate: string
+  completedDate: string,
+  completedTargetDate?: string
 ): AppDataBackup {
-  return skipFutureLimitRecords(data, ruleId, completedDate);
+  return skipFutureLimitRecords(data, ruleId, completedDate, completedTargetDate);
 }
 
