@@ -34,6 +34,7 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState<string>(() => getTodayString());
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
   const [isOptimizationOpen, setIsOptimizationOpen] = useState(false);
+  const [undoState, setUndoState] = useState<{ label: string; prevRecords: TaskRecord[] } | null>(null);
 
   // Load initial data on mount (defaults to empty unless user previously imported or saved)
   useEffect(() => {
@@ -108,8 +109,16 @@ export default function App() {
 
   // Update a single record (supports auto-skipping or restoring remaining days in period)
   const handleUpdateRecord = useCallback((updated: TaskRecord, skipRestOfPeriod?: boolean) => {
+    let actionLabel = `已更新「${updated.name}」`;
+    if (updated.status === 'pending') actionLabel = `已恢复待提醒「${updated.name}」`;
+    else if (updated.status === 'done') actionLabel = `已完成「${updated.name}」`;
+    else if (updated.status === 'skipped') actionLabel = `已跳过今日「${updated.name}」`;
+    else if (updated.status === 'canceled') actionLabel = `已取消「${updated.name}」`;
+
     setData((prev) => {
       if (!prev) return prev;
+      setUndoState({ label: actionLabel, prevRecords: prev.records });
+
       const index = prev.records.findIndex((r) => r.id === updated.id);
       const prevStatus = index >= 0 ? prev.records[index].status : undefined;
       let newRecords: TaskRecord[];
@@ -152,14 +161,33 @@ export default function App() {
   const handleSkipMonthRemaining = useCallback((ruleId: string, fromDate: string) => {
     setData((prev) => {
       if (!prev) return prev;
-      return skipFutureMonthlyLimitRecords(prev, ruleId, fromDate);
+      const nextData = skipFutureMonthlyLimitRecords(prev, ruleId, fromDate);
+      if (nextData !== prev) {
+        const ruleName = prev.rules.find((r) => r.id === ruleId)?.name || '任务';
+        setUndoState({ label: `已将「${ruleName}」当期后续设为免提醒`, prevRecords: prev.records });
+      }
+      return nextData;
     });
   }, []);
 
-  // Batch update records (also applies period limit/cap/advance-reminder auto-skip)
+  // Batch update records (applies period limit/cap/advance-reminder auto-skip & auto-restore on revert)
   const handleBatchUpdateRecords = useCallback((updatedList: TaskRecord[]) => {
+    if (updatedList.length === 0) return;
+    const firstStatus = updatedList[0].status;
+    const actionLabel =
+      firstStatus === 'done'
+        ? `已批量完成 ${updatedList.length} 项任务`
+        : firstStatus === 'pending'
+          ? `已批量恢复 ${updatedList.length} 项为待提醒`
+          : `已批量跳过 ${updatedList.length} 项任务`;
+
     setData((prev) => {
       if (!prev) return prev;
+      setUndoState({ label: actionLabel, prevRecords: prev.records });
+
+      const prevStatusMap = new Map<string, TaskRecord['status']>();
+      prev.records.forEach((r) => prevStatusMap.set(r.id, r.status));
+
       const map = new Map<string, TaskRecord>();
       updatedList.forEach((r) => map.set(r.id, r));
 
@@ -167,7 +195,8 @@ export default function App() {
       let nextData: AppDataBackup = { ...prev, records: newRecords };
 
       for (const updated of updatedList) {
-        if (updated.status !== 'done') continue;
+        const prevStatus = prevStatusMap.get(updated.id);
+        if (updated.status !== 'done' && prevStatus !== 'done') continue;
         const rule = nextData.rules.find((r) => r.id === updated.ruleId);
         const hasAnyCap =
           (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
@@ -190,6 +219,26 @@ export default function App() {
     });
   }, []);
 
+  // Undo last record status operation
+  const handleUndoLastAction = useCallback(() => {
+    if (!undoState) return;
+    const snapshotRecords = undoState.prevRecords;
+    setData((prev) => {
+      if (!prev) return prev;
+      const restored: AppDataBackup = {
+        ...prev,
+        records: snapshotRecords,
+      };
+      saveDataToLocalStorage(restored);
+      return restored;
+    });
+    setUndoState(null);
+  }, [undoState]);
+
+  const handleDismissUndo = useCallback(() => {
+    setUndoState(null);
+  }, []);
+
   // Rules management handlers
   const handleAddRule = useCallback((newRule: TaskRule) => {
     setData((prev) => {
@@ -205,6 +254,7 @@ export default function App() {
 
   // Update rule: automatically updates all unexecuted (pending) tasks of this rule!
   const handleUpdateRule = useCallback((updatedRule: TaskRule) => {
+    setUndoState(null);
     setData((prev) => {
       if (!prev) return prev;
       const { updatedData } = syncRuleToPendingRecords(prev, updatedRule);
@@ -214,6 +264,7 @@ export default function App() {
 
   // Cascading rule deletion: automatically purges subsequent pending tasks
   const handleDeleteRuleWithCascade = useCallback((ruleId: string, fromDate?: string) => {
+    setUndoState(null);
     setData((prev) => {
       if (!prev) return prev;
       const { updatedData } = deleteRuleAndPendingRecords(prev, ruleId, fromDate);
@@ -223,6 +274,7 @@ export default function App() {
 
   // Load new dataset
   const handleDataLoaded = useCallback((newData: AppDataBackup) => {
+    setUndoState(null);
     setData(newData);
     setCurrentDate(getTodayString());
   }, []);
@@ -270,6 +322,9 @@ export default function App() {
                 onUpdateRecord={handleUpdateRecord}
                 onBatchUpdateRecords={handleBatchUpdateRecords}
                 onSkipMonthRemaining={handleSkipMonthRemaining}
+                undoBanner={undoState ? { label: undoState.label } : null}
+                onUndoLastAction={handleUndoLastAction}
+                onDismissUndo={handleDismissUndo}
                 onNavigateToTab={(tab) => setActiveTab(tab as ActiveTab)}
               />
             )}

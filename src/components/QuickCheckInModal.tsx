@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TaskRecord, TaskRule } from '../types';
 import { evaluateFormula, getRulePeriodCapUsage } from '../services/dataStorage';
-import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, Bell, ShieldCheck } from 'lucide-react';
+import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, Bell, ShieldCheck, RotateCcw } from 'lucide-react';
 
 interface QuickCheckInModalProps {
   record: TaskRecord;
@@ -108,23 +108,46 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   };
 
   const handleSave = () => {
-    const num = actualInput.trim() ? parseFloat(actualInput) : 0;
+    const isRestoringPending = status === 'pending';
+    const num = !isRestoringPending && actualInput.trim() ? parseFloat(actualInput) : 0;
     const now = new Date().toISOString();
+    const hasAutoSkipFlag = !!(
+      record.monthlyLimitReached ||
+      record.weeklyLimitReached ||
+      record.solarTermLimitReached ||
+      record.advanceDoneSkipped ||
+      record.capReachedSkipped
+    );
+    const cleanedFeedback =
+      isRestoringPending && hasAutoSkipFlag && formulaExpr.trim() === (record.feedback || '').trim()
+        ? ''
+        : formulaExpr.trim();
+
     const updated: TaskRecord = {
       ...record,
       status,
       actual: isNaN(num) ? 0 : num,
-      feedback: formulaExpr.trim(),
+      feedback: cleanedFeedback,
       notes: notes.trim(),
       completedAt: status === 'done' ? (record.completedAt || now) : undefined,
       received: status === 'done' && num > 0,
+      ...(isRestoringPending
+        ? {
+            monthlyLimitReached: false,
+            weeklyLimitReached: false,
+            solarTermLimitReached: false,
+            advanceDoneSkipped: false,
+            capReachedSkipped: false,
+          }
+        : {}),
     };
     const shouldAutoSkip =
-      (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
-      (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
-      (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
-      (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
-      (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
+      status === 'done' &&
+      ((!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
+        (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
+        (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+        (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
+        (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0));
     onSave(updated, shouldAutoSkip ? skipRestOfMonth : false);
     onClose();
   };
@@ -311,11 +334,23 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
           {/* Status selector */}
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">任务状态</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={() => setStatus('pending')}
+                className={`py-2 px-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
+                  status === 'pending'
+                    ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-sky-50 hover:text-sky-700'
+                }`}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                待办提醒
+              </button>
               <button
                 type="button"
                 onClick={() => setStatus('done')}
-                className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
+                className={`py-2 px-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
                   status === 'done'
                     ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -327,7 +362,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStatus('skipped')}
-                className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
+                className={`py-2 px-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
                   status === 'skipped'
                     ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -339,7 +374,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStatus('canceled')}
-                className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
+                className={`py-2 px-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
                   status === 'canceled'
                     ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -349,6 +384,11 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                 已取消
               </button>
             </div>
+            {status === 'pending' && record.status !== 'pending' && (
+              <p className="mt-1.5 text-[11px] text-sky-700 bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1.5 leading-relaxed">
+                将恢复此任务为「待办提醒」状态并清零本次已记收益；若此前触发过周期次数或封顶自动免提醒，后续关联待办也将一并自动恢复。
+              </p>
+            )}
           </div>
 
           {/* Actual Yield / Earnings */}
@@ -479,9 +519,13 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
           <button
             type="button"
             onClick={handleSave}
-            className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs hover:shadow-sm transition-all"
+            className={`px-5 py-2 rounded-xl text-white text-xs font-semibold shadow-xs hover:shadow-sm transition-all ${
+              status === 'pending' && record.status !== 'pending'
+                ? 'bg-sky-600 hover:bg-sky-700'
+                : 'bg-indigo-600 hover:bg-indigo-700'
+            }`}
           >
-            确认提交打卡
+            {status === 'pending' && record.status !== 'pending' ? '确认恢复待提醒' : '确认提交打卡'}
           </button>
         </div>
       </div>

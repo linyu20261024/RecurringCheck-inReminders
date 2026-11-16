@@ -23,6 +23,8 @@ import {
   Moon,
   Sparkles,
   Bell,
+  RotateCcw,
+  X,
 } from 'lucide-react';
 
 interface TaskRemindersViewProps {
@@ -32,6 +34,9 @@ interface TaskRemindersViewProps {
   onUpdateRecord: (updatedRecord: TaskRecord, skipRestOfMonth?: boolean) => void;
   onBatchUpdateRecords: (updatedRecords: TaskRecord[]) => void;
   onSkipMonthRemaining?: (ruleId: string, fromDate: string) => void;
+  undoBanner?: { label: string } | null;
+  onUndoLastAction?: () => void;
+  onDismissUndo?: () => void;
   onNavigateToTab?: (tab: string) => void;
 }
 
@@ -46,6 +51,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   onUpdateRecord,
   onBatchUpdateRecords,
   onSkipMonthRemaining,
+  undoBanner,
+  onUndoLastAction,
+  onDismissUndo,
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('platform');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -309,29 +317,61 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     return Math.max(0, Math.round(val * 100) / 100);
   };
 
-  // Quick 1-click single check-in toggle
+  // Build a cleanly restored pending record (clears completion earnings and auto-skip flags)
+  const buildRestoredPendingRecord = (rec: TaskRecord): TaskRecord => {
+    const hasAutoSkipFlag = !!(
+      rec.monthlyLimitReached ||
+      rec.weeklyLimitReached ||
+      rec.solarTermLimitReached ||
+      rec.advanceDoneSkipped ||
+      rec.capReachedSkipped
+    );
+    return {
+      ...rec,
+      status: 'pending',
+      actual: 0,
+      completedAt: undefined,
+      received: false,
+      monthlyLimitReached: false,
+      weeklyLimitReached: false,
+      solarTermLimitReached: false,
+      advanceDoneSkipped: false,
+      capReachedSkipped: false,
+      feedback: hasAutoSkipFlag ? '' : rec.feedback,
+    };
+  };
+
+  // Explicit single-click restore to pending state
+  const handleRestoreToPending = (record: TaskRecord) => {
+    onUpdateRecord(buildRestoredPendingRecord(record), false);
+  };
+
+  // Quick 1-click single check-in toggle (pending -> done; done/skipped/canceled -> pending)
   const handleQuickToggleDone = (record: TaskRecord) => {
+    if (record.status !== 'pending') {
+      handleRestoreToPending(record);
+      return;
+    }
+
     const rule = rulesMap.get(record.ruleId);
-    const isNowDone = record.status !== 'done';
-    const defaultActual = isNowDone ? computeSmartDefaultActual(record, rule) : 0;
+    const defaultActual = computeSmartDefaultActual(record, rule);
     const now = new Date().toISOString();
 
     const updated: TaskRecord = {
       ...record,
-      status: isNowDone ? 'done' : 'pending',
+      status: 'done',
       actual: defaultActual,
-      completedAt: isNowDone ? now : undefined,
-      received: isNowDone && defaultActual > 0,
+      completedAt: now,
+      received: defaultActual > 0,
     };
 
     // If it's a period limit, period cap, or advance-reminder rule and user completed it, evaluate auto-skip
     const autoSkipPeriod =
-      isNowDone &&
-      ((!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
-        (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
-        (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
-        (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
-        (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0));
+      (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
+      (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
+      (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+      (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
+      (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
     onUpdateRecord(updated, autoSkipPeriod);
   };
 
@@ -357,13 +397,17 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
   };
 
   // Batch action for multi-selected records
-  const handleBatchAction = (targetStatus: 'done' | 'skipped') => {
+  const handleBatchAction = (targetStatus: 'done' | 'skipped' | 'pending') => {
     if (selectedRecordIds.size === 0) return;
     const now = new Date().toISOString();
     const toUpdate: TaskRecord[] = [];
 
     todayRecords.forEach((rec) => {
       if (selectedRecordIds.has(rec.id)) {
+        if (targetStatus === 'pending') {
+          toUpdate.push(buildRestoredPendingRecord(rec));
+          return;
+        }
         const rule = rulesMap.get(rec.ruleId);
         const defaultActual = targetStatus === 'done' ? computeSmartDefaultActual(rec, rule) : 0;
         toUpdate.push({
@@ -660,11 +704,19 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
 
         {/* Multi-selection Bar */}
         {selectedRecordIds.size > 0 && (
-          <div className="mt-2.5 p-2 bg-indigo-50/90 border border-indigo-200 rounded-xl flex items-center justify-between animate-in fade-in">
+          <div className="mt-2.5 p-2 bg-indigo-50/90 border border-indigo-200 rounded-xl flex flex-wrap items-center justify-between gap-2 animate-in fade-in">
             <span className="text-xs font-semibold text-indigo-900">
               已选 {selectedRecordIds.size} 项
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleBatchAction('pending')}
+                className="px-2.5 py-1 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors flex items-center gap-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                批量恢复待办
+              </button>
               <button
                 type="button"
                 onClick={() => handleBatchAction('done')}
@@ -692,6 +744,36 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Undo Last Action Toast Banner */}
+      {undoBanner && onUndoLastAction && (
+        <div className="bg-slate-900 text-white rounded-xl px-3.5 py-2.5 shadow-md flex items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2 text-xs min-w-0">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate font-medium">{undoBanner.label}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onUndoLastAction}
+              className="px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1 transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              撤销刚才操作
+            </button>
+            {onDismissUndo && (
+              <button
+                type="button"
+                onClick={onDismissUndo}
+                className="p-1 text-slate-400 hover:text-white rounded-md"
+                title="关闭提示"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main Task List / Aggregated Groups */}
       {filteredRecords.length === 0 ? (
@@ -810,10 +892,18 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                               type="button"
                               onClick={() => handleQuickToggleDone(rec)}
                               className="p-1 -m-1 shrink-0 focus:outline-hidden"
-                              title={isDone ? '标记为未完成' : '快捷一键完成'}
+                              title={
+                                isDone
+                                  ? '点击撤销完成并恢复待提醒'
+                                  : isSkipped
+                                    ? '点击恢复为待提醒状态'
+                                    : '快捷一键完成'
+                              }
                             >
                               {isDone ? (
                                 <CheckCircle2 className="w-5 h-5 text-emerald-600 fill-emerald-100" />
+                              ) : rec.status === 'canceled' ? (
+                                <Ban className="w-5 h-5 text-rose-400" />
                               ) : isSkipped ? (
                                 <Clock className="w-5 h-5 text-amber-500" />
                               ) : (
@@ -1044,6 +1134,23 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                               )}
                             </div>
 
+                            {/* Restore to pending button for completed/skipped/canceled items */}
+                            {(isDone || isSkipped) && (
+                              <button
+                                type="button"
+                                onClick={() => handleRestoreToPending(rec)}
+                                className={`px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-colors shrink-0 ${
+                                  isSkipped
+                                    ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
+                                    : 'bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border-slate-200'
+                                }`}
+                                title={isSkipped ? '恢复此任务到待提醒状态' : '撤回已完成状态并恢复待提醒'}
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>{isSkipped ? '恢复提醒' : '撤回'}</span>
+                              </button>
+                            )}
+
                             {/* Monthly Limit: One-click skip rest of month button */}
                             {isMonthlyLimitRule && !isSkipped && onSkipMonthRemaining && (
                               <button
@@ -1104,14 +1211,28 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                         }`}
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <input
+                            type="checkbox"
+                            checked={selectedRecordIds.has(rec.id)}
+                            onChange={() => toggleSelectRecord(rec.id)}
+                            className="rounded border-slate-300 text-indigo-600 shrink-0"
+                          />
                           <button
                             type="button"
                             onClick={() => handleQuickToggleDone(rec)}
                             className="focus:outline-hidden shrink-0"
-                            title={isDone ? '标记为未完成' : '快捷一键完成'}
+                            title={
+                              isDone
+                                ? '点击撤销完成并恢复待提醒'
+                                : isSkipped
+                                  ? '点击恢复为待提醒状态'
+                                  : '快捷一键完成'
+                            }
                           >
                             {isDone ? (
                               <CheckCircle2 className="w-5 h-5 text-emerald-600 fill-emerald-100" />
+                            ) : rec.status === 'canceled' ? (
+                              <Ban className="w-5 h-5 text-rose-400" />
                             ) : isSkipped ? (
                               <Clock className="w-5 h-5 text-amber-500" />
                             ) : (
@@ -1231,15 +1352,35 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                 {rec.path || rule?.path}
                               </p>
                             )}
+                            {rec.feedback && (
+                              <div className="text-[10px] text-indigo-700 font-mono truncate">
+                                备注: {rec.feedback}
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                           <span className={`text-xs font-semibold tabular-nums ${isDone ? 'text-emerald-700' : 'text-slate-700'}`}>
                             {rec.currency === 'CNY'
                               ? `¥${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toFixed(2)}`
                               : `${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toLocaleString()} 分`}
                           </span>
+                          {(isDone || isSkipped) && (
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreToPending(rec)}
+                              className={`px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-colors shrink-0 ${
+                                isSkipped
+                                  ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
+                                  : 'bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border-slate-200'
+                              }`}
+                              title={isSkipped ? '恢复此任务到待提醒状态' : '撤回已完成状态并恢复待提醒'}
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>{isSkipped ? '恢复提醒' : '撤回'}</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setActiveCheckInRecord(rec)}
@@ -1282,10 +1423,18 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                     type="button"
                     onClick={() => handleQuickToggleDone(rec)}
                     className="focus:outline-hidden shrink-0"
-                    title={isDone ? '标记为未完成' : '快捷一键完成'}
+                    title={
+                      isDone
+                        ? '点击撤销完成并恢复待提醒'
+                        : isSkipped
+                          ? '点击恢复为待提醒状态'
+                          : '快捷一键完成'
+                    }
                   >
                     {isDone ? (
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 fill-emerald-100" />
+                    ) : rec.status === 'canceled' ? (
+                      <Ban className="w-5 h-5 text-rose-400" />
                     ) : isSkipped ? (
                       <Clock className="w-5 h-5 text-amber-500" />
                     ) : (
@@ -1402,15 +1551,35 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                     {(rec.path || rule?.path) && (
                       <p className="text-[11px] text-slate-400 font-mono truncate">{rec.path || rule?.path}</p>
                     )}
+                    {rec.feedback && (
+                      <div className="text-[10px] text-indigo-700 font-mono truncate">
+                        备注: {rec.feedback}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <span className={`text-xs font-bold tabular-nums ${isDone ? 'text-emerald-700' : 'text-slate-700'}`}>
                     {rec.currency === 'CNY'
                       ? `¥${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toFixed(2)}`
                       : `${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toLocaleString()} 分`}
                   </span>
+                  {(isDone || isSkipped) && (
+                    <button
+                      type="button"
+                      onClick={() => handleRestoreToPending(rec)}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-colors shrink-0 ${
+                        isSkipped
+                          ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
+                          : 'bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border-slate-200'
+                      }`}
+                      title={isSkipped ? '恢复此任务到待提醒状态' : '撤回已完成状态并恢复待提醒'}
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>{isSkipped ? '恢复提醒' : '撤回'}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setActiveCheckInRecord(rec)}
