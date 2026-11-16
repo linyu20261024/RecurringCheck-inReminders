@@ -124,13 +124,19 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
         ? ''
         : formulaExpr.trim();
 
+    const shouldRefreshCompletedAt =
+      status === 'done' &&
+      (!record.completedAt ||
+        record.status !== 'done' ||
+        ((record.actual || 0) <= 0 && cleanNum > 0));
+
     const updated: TaskRecord = {
       ...record,
       status,
       actual: status === 'done' ? cleanNum : 0,
       feedback: cleanedFeedback,
       notes: notes.trim(),
-      completedAt: status === 'done' ? (record.completedAt || now) : undefined,
+      completedAt: status === 'done' ? (shouldRefreshCompletedAt ? now : record.completedAt) : undefined,
       received: status === 'done' && cleanNum > 0,
       ...(isRestoringPending
         ? {

@@ -10,10 +10,11 @@ import {
   BarChart3,
   PieChart,
   Search,
-  Filter,
   RotateCcw,
   Sparkles,
-  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  Clock,
 } from 'lucide-react';
 
 interface AnalyticsViewProps {
@@ -22,6 +23,31 @@ interface AnalyticsViewProps {
 }
 
 type TimeRange = 'all' | '30d' | '14d' | '7d';
+
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+const formatLocalDate = (isoStr?: string): string => {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
+const formatLocalDateTime = (isoStr?: string): string => {
+  if (!isoStr) return '-';
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return '-';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+};
+
+const getRecordCompletionTimestamp = (rec: { completedAt?: string; date: string }): number => {
+  if (rec.completedAt) {
+    const ts = new Date(rec.completedAt).getTime();
+    if (!Number.isNaN(ts)) return ts;
+  }
+  const fallback = new Date(`${rec.date}T00:00:00`).getTime();
+  return Number.isNaN(fallback) ? 0 : fallback;
+};
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
   // Dynamic today string (e.g. 2026-11-07)
@@ -34,6 +60,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
   const [rateMode, setRateMode] = useState<'due' | 'overall'>('due');
+  const [includeZeroCashRecords, setIncludeZeroCashRecords] = useState<boolean>(false);
+  const [showAllYieldRecords, setShowAllYieldRecords] = useState<boolean>(false);
 
   // Extract all available months (sorted desc, e.g. 2026-11, 2026-10)
   const availableMonths = useMemo(() => {
@@ -71,14 +99,18 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       if (selectedPlatform !== 'all') {
         if (r.platform !== selectedPlatform) return false;
       }
-      // Keyword search
+      // Keyword search (matches task name, platform, category, date, feedback, notes)
       if (searchTableQuery.trim()) {
-        const q = searchTableQuery.toLowerCase();
+        const q = searchTableQuery.trim().toLowerCase();
         const matchName = r.name.toLowerCase().includes(q);
         const matchPlat = r.platform.toLowerCase().includes(q);
+        const matchCategory = (r.category || '').toLowerCase().includes(q);
         const matchDate = r.date.includes(q);
         const matchFb = (r.feedback || '').toLowerCase().includes(q);
-        if (!matchName && !matchPlat && !matchDate && !matchFb) return false;
+        const matchNotes = (r.notes || '').toLowerCase().includes(q);
+        if (!matchName && !matchPlat && !matchCategory && !matchDate && !matchFb && !matchNotes) {
+          return false;
+        }
       }
       return true;
     });
@@ -93,12 +125,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
   const kpis = useMemo(() => {
     let totalCny = 0;
     let expectedCny = 0;
+    let positiveCnyCount = 0;
     const dateMap: Record<string, number> = {};
 
     filteredDoneCnyRecords.forEach((r) => {
       const val = r.actual || 0;
       totalCny += val;
-      dateMap[r.date] = (dateMap[r.date] || 0) + val;
+      if (val > 0) {
+        positiveCnyCount += 1;
+        dateMap[r.date] = (dateMap[r.date] || 0) + val;
+      }
     });
 
     filteredRecords.forEach((r) => {
@@ -112,7 +148,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
     const totalPending = filteredRecords.filter((r) => r.status === 'pending').length;
     const totalSkipped = filteredRecords.filter((r) => r.status === 'skipped' || r.status === 'canceled').length;
     
-    // Overall completion rate = done / (done + pending + skipped) = done / totalScheduled
+    // Overall completion rate = done / totalScheduled
     const overallRate = totalScheduled > 0 ? Math.round((totalDone / totalScheduled) * 100) : 0;
 
     // Due records (tasks scheduled up to today)
@@ -120,7 +156,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
     const dueDone = dueRecords.filter((r) => r.status === 'done').length;
     const dueRate = dueRecords.length > 0 ? Math.round((dueDone / dueRecords.length) * 100) : 0;
 
-    // Daily best and active days
+    // Daily best and active days (days with positive cash yield > 0)
     let bestDay = '-';
     let maxDayAmount = 0;
     const activeDaysCount = Object.keys(dateMap).length;
@@ -137,6 +173,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
     return {
       totalCny: Math.round(totalCny * 100) / 100,
       expectedCny: Math.round(expectedCny * 100) / 100,
+      positiveCnyCount,
+      doneCnyCount: filteredDoneCnyRecords.length,
       totalScheduled,
       totalDone,
       totalPending,
@@ -150,7 +188,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       bestDay,
       maxDayAmount: Math.round(maxDayAmount * 100) / 100,
     };
-  }, [filteredDoneCnyRecords, filteredRecords]);
+  }, [filteredDoneCnyRecords, filteredRecords, todayStr]);
 
   // Daily statistics for trend chart (CNY cash only) based on current filters
   const dailyStats = useMemo(() => {
@@ -245,6 +283,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       {
         platform: string;
         cny: number;
+        cnyDoneTasks: number;
         totalTasks: number;
         doneTasks: number;
         pendingTasks: number;
@@ -258,12 +297,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
     const baseRecords = data.records.filter((r) => {
       if (selectedMonth !== 'all' && !r.date.startsWith(selectedMonth)) return false;
       if (searchTableQuery.trim()) {
-        const q = searchTableQuery.toLowerCase();
+        const q = searchTableQuery.trim().toLowerCase();
         const matchName = r.name.toLowerCase().includes(q);
         const matchPlat = r.platform.toLowerCase().includes(q);
+        const matchCategory = (r.category || '').toLowerCase().includes(q);
         const matchDate = r.date.includes(q);
         const matchFb = (r.feedback || '').toLowerCase().includes(q);
-        if (!matchName && !matchPlat && !matchDate && !matchFb) return false;
+        const matchNotes = (r.notes || '').toLowerCase().includes(q);
+        if (!matchName && !matchPlat && !matchCategory && !matchDate && !matchFb && !matchNotes) {
+          return false;
+        }
       }
       return true;
     });
@@ -273,6 +316,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
         map[r.platform] = {
           platform: r.platform,
           cny: 0,
+          cnyDoneTasks: 0,
           totalTasks: 0,
           doneTasks: 0,
           pendingTasks: 0,
@@ -285,6 +329,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       if (r.status === 'done') {
         map[r.platform].doneTasks += 1;
         if (r.currency === 'CNY') {
+          map[r.platform].cnyDoneTasks += 1;
           map[r.platform].cny += r.actual || 0;
         }
       } else if (r.status === 'pending') {
@@ -306,8 +351,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       .map((p) => ({
         ...p,
         cny: Math.round(p.cny * 100) / 100,
-        avgPerTask: p.doneTasks > 0 ? Math.round((p.cny / p.doneTasks) * 100) / 100 : 0,
-        // Overall rate = 已执行 / (已执行 + 待执行 + 已跳过)
+        avgPerTask: p.cnyDoneTasks > 0 ? Math.round((p.cny / p.cnyDoneTasks) * 100) / 100 : 0,
+        // Overall rate = 已执行 / 总排期
         completionRate: p.totalTasks > 0 ? Math.round((p.doneTasks / p.totalTasks) * 100) : 0,
         // Due rate = 截至今日已到期任务的完成率 = 截至今日已执行 / 截至今日总排出
         dueCompletionRate: p.dueTotal > 0 ? Math.round((p.dueDone / p.dueTotal) * 100) : 0,
@@ -333,12 +378,32 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
     return list.sort((a, b) => b.cny - a.cny || b.count - a.count);
   }, [filteredDoneCnyRecords]);
 
-  // Filtered positive cash yield records for table
-  const yieldTableRecords = useMemo(() => {
-    return filteredDoneCnyRecords
-      .filter((r) => (r.actual ?? 0) > 0)
-      .sort((a, b) => b.date.localeCompare(a.date));
+  // Filtered cash yield records sorted descending by actual completion time (just-completed tasks first)
+  const sortedDoneCnyRecords = useMemo(() => {
+    return [...filteredDoneCnyRecords].sort((a, b) => {
+      const timeDiff = getRecordCompletionTimestamp(b) - getRecordCompletionTimestamp(a);
+      if (timeDiff !== 0) return timeDiff;
+      const dateCmp = b.date.localeCompare(a.date);
+      if (dateCmp !== 0) return dateCmp;
+      return b.id.localeCompare(a.id);
+    });
   }, [filteredDoneCnyRecords]);
+
+  const yieldTableRecords = useMemo(() => {
+    if (includeZeroCashRecords) {
+      return sortedDoneCnyRecords;
+    }
+    return sortedDoneCnyRecords.filter((r) => (r.actual ?? 0) > 0);
+  }, [sortedDoneCnyRecords, includeZeroCashRecords]);
+
+  const zeroCashDoneCount = useMemo(() => {
+    return sortedDoneCnyRecords.length - sortedDoneCnyRecords.filter((r) => (r.actual ?? 0) > 0).length;
+  }, [sortedDoneCnyRecords]);
+
+  const yieldTableTotalCny = useMemo(() => {
+    const sum = yieldTableRecords.reduce((acc, r) => acc + (r.actual || 0), 0);
+    return Math.round(sum * 100) / 100;
+  }, [yieldTableRecords]);
 
   // Max value for chart scaling
   const maxDailyCny = useMemo(() => {
@@ -418,7 +483,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
             </label>
             <select
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedMonth(val);
+                if (val !== 'all') setTimeRange('all');
+              }}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 py-2 px-3 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white"
             >
               <option value="all">全周期 (全部历史月份)</option>
@@ -509,10 +578,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
           <div className="text-2xl font-black text-slate-900 tabular-nums">
             ¥{kpis.totalCny.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
-          <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
+          <div className="mt-2 text-xs text-slate-500 flex items-center justify-between gap-2">
             <span>预期: ¥{kpis.expectedCny.toFixed(2)}</span>
             <span className="text-indigo-600 font-semibold tabular-nums">
-              {kpis.totalDone} 项已入账
+              {kpis.positiveCnyCount} 笔入账
+              {kpis.doneCnyCount > kpis.positiveCnyCount && (
+                <span className="text-slate-400 font-normal"> / 含¥0共{kpis.doneCnyCount}次</span>
+              )}
             </span>
           </div>
         </div>
@@ -925,11 +997,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                         )}
                       </div>
 
-                      {/* Explicit Breakdown: Done, Pending, Total, Rate */}
+                      {/* Explicit Breakdown: Done, Pending, Skipped, Total, Rate */}
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 mt-1">
                         <span className="text-emerald-700 font-medium">已执行 {p.doneTasks}</span>
                         <span className="text-slate-300">/</span>
                         <span className="text-amber-700 font-medium">待执行 {p.pendingTasks}</span>
+                        {p.skippedTasks > 0 && (
+                          <>
+                            <span className="text-slate-300">/</span>
+                            <span className="text-slate-500">跳过取消 {p.skippedTasks}</span>
+                          </>
+                        )}
                         <span className="text-slate-300">·</span>
                         <span>总排 {p.totalTasks} 项</span>
                         <span className="text-slate-300">·</span>
@@ -1009,7 +1087,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
                       <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                         <div
                           className={`h-full ${barColor} rounded-full transition-all duration-300`}
-                          style={{ width: `${Math.max(pct, 3)}%` }}
+                          style={{ width: `${c.cny > 0 ? Math.max(pct, 3) : 0}%` }}
                         />
                       </div>
                       <div className="text-[11px] text-slate-400 flex items-center justify-between">
@@ -1029,59 +1107,161 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
         </div>
       </div>
 
-      {/* Yield Records Details Table (Filtered by Month & Platform) */}
+      {/* Yield Records Details Table (Filtered by Month & Platform, Sorted Descending by Local Completion Time) */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">
-              现金入账明细流水（共 {yieldTableRecords.length} 笔）
-            </h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-slate-800">
+                现金入账明细流水（共 {yieldTableRecords.length} 笔）
+              </h3>
+              {yieldTableRecords.length > 0 && (
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg tabular-nums">
+                  合计 ¥{yieldTableTotalCny.toFixed(2)}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              记录每笔实际入账的人民币金额、算式公式及完成时间
+              按本地完成时间降序排列（刚完成的任务优先置顶），记录实际人民币入账、算式与备注
             </p>
           </div>
+
+          {zeroCashDoneCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setIncludeZeroCashRecords((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors self-start sm:self-center shrink-0 ${
+                includeZeroCashRecords
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-semibold'
+                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              {includeZeroCashRecords
+                ? `已显示 ¥0 完成记录 (${zeroCashDoneCount} 笔)`
+                : `显示 ¥0 完成记录 (+${zeroCashDoneCount} 笔)`}
+            </button>
+          )}
         </div>
 
-        <div className="mt-4 overflow-x-auto max-h-[360px] overflow-y-auto">
+        <div className="mt-4 overflow-x-auto max-h-[420px] overflow-y-auto">
           {yieldTableRecords.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
-              当前月份或平台无实际入账的现金流水记录
+              {zeroCashDoneCount > 0 && !includeZeroCashRecords
+                ? `当前共有 ${zeroCashDoneCount} 笔实际收益为 ¥0 的已完成任务，可点击右上角按钮查看`
+                : '当前筛选条件无人民币现金流水记录'}
             </div>
           ) : (
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 border-b border-slate-200 z-10">
                 <tr>
-                  <th className="py-2.5 px-3">日期</th>
-                  <th className="py-2.5 px-3">平台</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">完成时间 ↓ (本地)</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">任务日期</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">平台</th>
                   <th className="py-2.5 px-3">任务名称</th>
-                  <th className="py-2.5 px-3 text-right">实际现金收益</th>
-                  <th className="py-2.5 px-3">算式/反馈备注</th>
-                  <th className="py-2.5 px-3">完成时间</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">实际现金收益</th>
+                  <th className="py-2.5 px-3">算式 / 执行备注</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {yieldTableRecords.slice(0, 100).map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="py-2.5 px-3 font-mono text-slate-600">{r.date}</td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-semibold text-slate-800">{r.platform}</span>
-                    </td>
-                    <td className="py-2.5 px-3 text-slate-700 font-medium">{r.name}</td>
-                    <td className="py-2.5 px-3 text-right font-bold tabular-nums text-emerald-700">
-                      ¥{(r.actual || 0).toFixed(2)}
-                    </td>
-                    <td className="py-2.5 px-3 text-slate-500 font-mono text-[11px]">
-                      {r.feedback || '-'}
-                    </td>
-                    <td className="py-2.5 px-3 text-slate-400 text-[11px] font-mono">
-                      {r.completedAt ? r.completedAt.slice(11, 19) : '-'}
-                    </td>
-                  </tr>
-                ))}
+                {(showAllYieldRecords ? yieldTableRecords : yieldTableRecords.slice(0, 100)).map((r) => {
+                  const localCompletedStr = formatLocalDateTime(r.completedAt);
+                  const localCompletedDate = formatLocalDate(r.completedAt);
+                  const completedTs = r.completedAt ? new Date(r.completedAt).getTime() : NaN;
+                  const diffMs = !Number.isNaN(completedTs) ? Date.now() - completedTs : Infinity;
+                  const isJustCompleted = diffMs >= 0 && diffMs <= 10 * 60 * 1000;
+                  const isRetroactive = !!localCompletedDate && localCompletedDate !== r.date;
+                  const noteParts = [r.feedback, r.notes].filter((v) => v && v.trim().length > 0);
+                  const actualVal = r.actual || 0;
+
+                  return (
+                    <tr
+                      key={r.id}
+                      className={`transition-colors ${
+                        isJustCompleted ? 'bg-emerald-50/40 hover:bg-emerald-50/70' : 'hover:bg-slate-50/70'
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 text-slate-600 text-[11px] font-mono whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>{localCompletedStr}</span>
+                          {isJustCompleted && (
+                            <span className="px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-700 font-sans text-[10px] font-bold">
+                              刚刚
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-slate-500 whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <span>{r.date}</span>
+                          {isRetroactive && (
+                            <span
+                              className="px-1 py-0.2 rounded-sm bg-amber-50 text-amber-700 border border-amber-200/70 font-sans text-[10px]"
+                              title={`任务所属日期为 ${r.date}，实际打卡于 ${localCompletedDate}`}
+                            >
+                              补记
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span className="font-semibold text-slate-800">{r.platform}</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-700 font-medium">
+                        <div>{r.name}</div>
+                        <div className="text-[10px] text-slate-400">{r.category}</div>
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 text-right font-bold tabular-nums whitespace-nowrap ${
+                          actualVal > 0 ? 'text-emerald-700' : 'text-slate-400'
+                        }`}
+                      >
+                        ¥{actualVal.toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-[240px]">
+                        {noteParts.length > 0 ? (
+                          <div className="space-y-0.5 break-words">
+                            {r.feedback && <div className="font-mono text-slate-600">{r.feedback}</div>}
+                            {r.notes && <div className="text-slate-400">{r.notes}</div>}
+                          </div>
+                        ) : (
+                          '-'
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
+
+        {yieldTableRecords.length > 100 && (
+          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>
+              {showAllYieldRecords
+                ? `已展示全部 ${yieldTableRecords.length} 笔流水`
+                : `当前显示最新 100 笔（共 ${yieldTableRecords.length} 笔）`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAllYieldRecords((prev) => !prev)}
+              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold flex items-center gap-1 transition-colors"
+            >
+              {showAllYieldRecords ? (
+                <>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  收起至最新 100 笔
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                  展开全部 {yieldTableRecords.length} 笔
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
