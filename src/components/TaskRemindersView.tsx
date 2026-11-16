@@ -304,19 +304,6 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     return `${val}`;
   };
 
-  // Compute smart default actual value respecting singleCapAmount & remaining period cap
-  const computeSmartDefaultActual = (rec: TaskRecord, rule?: TaskRule): number => {
-    let val = rec.expected ?? rule?.amount ?? 0;
-    if (rule?.singleCapAmount && rule.singleCapAmount > 0 && val > rule.singleCapAmount) {
-      val = rule.singleCapAmount;
-    }
-    const capUsage = rule ? rulePeriodCapMap.get(rule.id) : null;
-    if (capUsage && val > capUsage.remainingAmount) {
-      val = capUsage.remainingAmount;
-    }
-    return Math.max(0, Math.round(val * 100) / 100);
-  };
-
   // Build a cleanly restored pending record (clears completion earnings and auto-skip flags)
   const buildRestoredPendingRecord = (rec: TaskRecord): TaskRecord => {
     const hasAutoSkipFlag = !!(
@@ -346,7 +333,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     onUpdateRecord(buildRestoredPendingRecord(record), false);
   };
 
-  // Quick 1-click single check-in toggle (pending -> done; done/skipped/canceled -> pending)
+  // Quick 1-click single check-in toggle (pending -> done with actual=0 if unfilled; done/skipped/canceled -> pending)
   const handleQuickToggleDone = (record: TaskRecord) => {
     if (record.status !== 'pending') {
       handleRestoreToPending(record);
@@ -354,15 +341,14 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     }
 
     const rule = rulesMap.get(record.ruleId);
-    const defaultActual = computeSmartDefaultActual(record, rule);
     const now = new Date().toISOString();
 
     const updated: TaskRecord = {
       ...record,
       status: 'done',
-      actual: defaultActual,
+      actual: 0,
       completedAt: now,
-      received: defaultActual > 0,
+      received: false,
     };
 
     // If it's a period limit, period cap, or advance-reminder rule and user completed it, evaluate auto-skip
@@ -375,23 +361,19 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     onUpdateRecord(updated, autoSkipPeriod);
   };
 
-  // Batch complete all pending in a platform
-  const handleBatchCompletePlatform = (platformName: string, records: TaskRecord[]) => {
+  // Batch complete all pending in a platform (actual defaults to 0 when unfilled)
+  const handleBatchCompletePlatform = (_platformName: string, records: TaskRecord[]) => {
     const pendingList = records.filter((r) => r.status === 'pending');
     if (pendingList.length === 0) return;
 
     const now = new Date().toISOString();
-    const updatedList: TaskRecord[] = pendingList.map((rec) => {
-      const rule = rulesMap.get(rec.ruleId);
-      const defaultActual = computeSmartDefaultActual(rec, rule);
-      return {
-        ...rec,
-        status: 'done',
-        actual: defaultActual,
-        completedAt: now,
-        received: defaultActual > 0,
-      };
-    });
+    const updatedList: TaskRecord[] = pendingList.map((rec) => ({
+      ...rec,
+      status: 'done',
+      actual: 0,
+      completedAt: now,
+      received: false,
+    }));
 
     onBatchUpdateRecords(updatedList);
   };
@@ -408,14 +390,12 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
           toUpdate.push(buildRestoredPendingRecord(rec));
           return;
         }
-        const rule = rulesMap.get(rec.ruleId);
-        const defaultActual = targetStatus === 'done' ? computeSmartDefaultActual(rec, rule) : 0;
         toUpdate.push({
           ...rec,
           status: targetStatus,
-          actual: defaultActual,
+          actual: 0,
           completedAt: targetStatus === 'done' ? now : undefined,
-          received: targetStatus === 'done' && defaultActual > 0,
+          received: false,
         });
       }
     });
@@ -845,11 +825,11 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
 
                     {/* Batch Complete for this Platform */}
                     {pendingCount > 0 && (
-                      <button
+                        <button
                         type="button"
                         onClick={() => handleBatchCompletePlatform(platformName, records)}
                         className="px-2 sm:px-3 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-semibold flex items-center gap-1 transition-colors shrink-0"
-                        title="一键将该 App 内所有待办任务标记为已完成"
+                        title="一键将该 App 内所有待办任务标记为已完成（未填实际收益默认记为 0）"
                       >
                         <CheckCheck className="w-3.5 h-3.5" />
                         <span>一键打卡 ({pendingCount})</span>
@@ -1116,12 +1096,12 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                               {rec.currency === 'CNY' ? (
                                 <div className="text-xs font-bold tabular-nums text-slate-800">
                                   {isDone ? (
-                                    <span className="text-emerald-700 font-bold">
+                                    <span className={(rec.actual ?? 0) > 0 ? 'text-emerald-700 font-bold' : 'text-slate-400 font-semibold'}>
                                       ¥{(rec.actual ?? 0).toFixed(2)}
                                     </span>
                                   ) : (
-                                    <span className="text-slate-600">
-                                      ¥{(rec.expected ?? rule?.amount ?? 0).toFixed(2)}
+                                    <span className="text-slate-500 font-medium" title="预期参考金额（未填实得直接打卡记为 ¥0.00）">
+                                      预 ¥{(rec.expected ?? rule?.amount ?? 0).toFixed(2)}
                                     </span>
                                   )}
                                 </div>
@@ -1129,7 +1109,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                 <div className="text-xs font-semibold tabular-nums text-amber-600">
                                   {isDone
                                     ? `${(rec.actual ?? 0).toLocaleString()} 分`
-                                    : `${(rec.expected ?? rule?.amount ?? 0).toLocaleString()} 分`}
+                                    : `预 ${(rec.expected ?? rule?.amount ?? 0).toLocaleString()} 分`}
                                 </div>
                               )}
                             </div>
@@ -1361,10 +1341,22 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                          <span className={`text-xs font-semibold tabular-nums ${isDone ? 'text-emerald-700' : 'text-slate-700'}`}>
+                          <span
+                            className={`text-xs font-semibold tabular-nums ${
+                              isDone
+                                ? (rec.actual ?? 0) > 0
+                                  ? 'text-emerald-700'
+                                  : 'text-slate-400'
+                                : 'text-slate-500'
+                            }`}
+                          >
                             {rec.currency === 'CNY'
-                              ? `¥${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toFixed(2)}`
-                              : `${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toLocaleString()} 分`}
+                              ? isDone
+                                ? `¥${(rec.actual ?? 0).toFixed(2)}`
+                                : `预 ¥${(rec.expected ?? rule?.amount ?? 0).toFixed(2)}`
+                              : isDone
+                                ? `${(rec.actual ?? 0).toLocaleString()} 分`
+                                : `预 ${(rec.expected ?? rule?.amount ?? 0).toLocaleString()} 分`}
                           </span>
                           {(isDone || isSkipped) && (
                             <button
@@ -1560,10 +1552,22 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                  <span className={`text-xs font-bold tabular-nums ${isDone ? 'text-emerald-700' : 'text-slate-700'}`}>
+                  <span
+                    className={`text-xs font-bold tabular-nums ${
+                      isDone
+                        ? (rec.actual ?? 0) > 0
+                          ? 'text-emerald-700'
+                          : 'text-slate-400'
+                        : 'text-slate-500'
+                    }`}
+                  >
                     {rec.currency === 'CNY'
-                      ? `¥${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toFixed(2)}`
-                      : `${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toLocaleString()} 分`}
+                      ? isDone
+                        ? `¥${(rec.actual ?? 0).toFixed(2)}`
+                        : `预 ¥${(rec.expected ?? rule?.amount ?? 0).toFixed(2)}`
+                      : isDone
+                        ? `${(rec.actual ?? 0).toLocaleString()} 分`
+                        : `预 ${(rec.expected ?? rule?.amount ?? 0).toLocaleString()} 分`}
                   </span>
                   {(isDone || isSkipped) && (
                     <button

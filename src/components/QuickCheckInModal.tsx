@@ -109,7 +109,8 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
 
   const handleSave = () => {
     const isRestoringPending = status === 'pending';
-    const num = !isRestoringPending && actualInput.trim() ? parseFloat(actualInput) : 0;
+    const num = status === 'done' && actualInput.trim() ? parseFloat(actualInput) : 0;
+    const cleanNum = isNaN(num) ? 0 : num;
     const now = new Date().toISOString();
     const hasAutoSkipFlag = !!(
       record.monthlyLimitReached ||
@@ -126,11 +127,11 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
     const updated: TaskRecord = {
       ...record,
       status,
-      actual: isNaN(num) ? 0 : num,
+      actual: status === 'done' ? cleanNum : 0,
       feedback: cleanedFeedback,
       notes: notes.trim(),
       completedAt: status === 'done' ? (record.completedAt || now) : undefined,
-      received: status === 'done' && num > 0,
+      received: status === 'done' && cleanNum > 0,
       ...(isRestoringPending
         ? {
             monthlyLimitReached: false,
@@ -426,7 +427,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                     step="any"
                     value={actualInput}
                     onChange={(e) => setActualInput(e.target.value)}
-                    placeholder="0.00"
+                    placeholder="未填默认为 0"
                     className={`w-full pl-3 pr-14 py-2 border rounded-xl text-sm font-semibold tabular-nums focus:outline-hidden focus:ring-2 ${
                       exceedsSingleCap || exceedsPeriodCap
                         ? 'border-amber-400 focus:ring-amber-500 focus:border-amber-500 bg-amber-50/30'
