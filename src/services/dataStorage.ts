@@ -111,6 +111,17 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       unit: r.unit || 'day',
       amount: typeof r.amount === 'number' ? r.amount : 0,
       currency: r.currency || 'CNY',
+      singleCapAmount: typeof r.singleCapAmount === 'number' && r.singleCapAmount > 0 ? r.singleCapAmount : undefined,
+      periodCapAmount: typeof r.periodCapAmount === 'number' && r.periodCapAmount > 0 ? r.periodCapAmount : undefined,
+      periodCapScope:
+        r.periodCapScope === 'week' ||
+        r.periodCapScope === 'month' ||
+        r.periodCapScope === 'solarTerm' ||
+        r.periodCapScope === 'total'
+          ? r.periodCapScope
+          : r.periodCapAmount && r.periodCapAmount > 0
+            ? 'month'
+            : undefined,
       priority: r.priority || '中',
       active: r.active !== false,
       monthlyLimit: typeof r.monthlyLimit === 'number' && r.monthlyLimit > 0 ? r.monthlyLimit : undefined,
@@ -156,6 +167,7 @@ export function normalizeBackupData(raw: unknown): AppDataBackup {
       weeklyLimitReached: !!rec.weeklyLimitReached,
       solarTermLimitReached: !!rec.solarTermLimitReached,
       advanceDoneSkipped: !!rec.advanceDoneSkipped,
+      capReachedSkipped: !!rec.capReachedSkipped,
       createdAt: rec.createdAt,
     };
   });
@@ -349,21 +361,39 @@ export function evaluateFormula(expr: string): number | null {
   return null;
 }
 
-// Analyze template redundancy and optimization potential
-export function analyzeTemplateOptimization(data: AppDataBackup): OptimizationDiagnosis {
-  const rawJson = JSON.stringify(data, null, 2);
-  const rawBytes = new Blob([rawJson]).size;
+// Build compact v3 backup without losing timing, target countdown, notes, or skip reason metadata
+export function buildOptimizedBackup(data: AppDataBackup): AppDataBackup {
+  const ruleMap = new Map<string, TaskRule>();
+  data.rules.forEach((r) => ruleMap.set(r.id, r));
 
-  const compactRecords = data.records.map((rec) => ({
-    id: rec.id,
-    ruleId: rec.ruleId,
-    date: rec.date,
-    status: rec.status,
-    actual: rec.actual,
-    expected: rec.expected,
-    completedAt: rec.completedAt,
-    feedback: rec.feedback || undefined,
-  }));
+  const compactRecords = data.records.map((rec) => {
+    const rule = ruleMap.get(rec.ruleId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const compact: any = {
+      id: rec.id,
+      ruleId: rec.ruleId,
+      date: rec.date,
+      status: rec.status,
+      actual: rec.actual,
+      expected: rec.expected,
+    };
+    if (rec.completedAt) compact.completedAt = rec.completedAt;
+    if (rec.feedback) compact.feedback = rec.feedback;
+    if (rec.time && rec.time !== rule?.time) compact.time = rec.time;
+    if (rec.deadline && rec.deadline !== rule?.deadline) compact.deadline = rec.deadline;
+    if (rec.timeSensitive !== undefined && rec.timeSensitive !== !!rule?.timeSensitive) {
+      compact.timeSensitive = rec.timeSensitive;
+    }
+    if (rec.targetDate) compact.targetDate = rec.targetDate;
+    if (rec.daysUntilTarget !== undefined) compact.daysUntilTarget = rec.daysUntilTarget;
+    if (rec.notes && rec.notes !== rule?.notes) compact.notes = rec.notes;
+    if (rec.monthlyLimitReached) compact.monthlyLimitReached = true;
+    if (rec.weeklyLimitReached) compact.weeklyLimitReached = true;
+    if (rec.solarTermLimitReached) compact.solarTermLimitReached = true;
+    if (rec.advanceDoneSkipped) compact.advanceDoneSkipped = true;
+    if (rec.capReachedSkipped) compact.capReachedSkipped = true;
+    return compact;
+  });
 
   const compactRules = data.rules.map((rule) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -378,12 +408,20 @@ export function analyzeTemplateOptimization(data: AppDataBackup): OptimizationDi
     return r;
   });
 
-  const compactData = {
+  return {
     version: 3,
     rules: compactRules,
-    records: compactRecords,
+    records: compactRecords as TaskRecord[],
+    _savedAt: Date.now(),
   };
+}
 
+// Analyze template redundancy and optimization potential
+export function analyzeTemplateOptimization(data: AppDataBackup): OptimizationDiagnosis {
+  const rawJson = JSON.stringify(data, null, 2);
+  const rawBytes = new Blob([rawJson]).size;
+
+  const compactData = buildOptimizedBackup(data);
   const compactBytes = new Blob([JSON.stringify(compactData)]).size;
   const compressionRatio = rawBytes > 0 ? Math.round(((rawBytes - compactBytes) / rawBytes) * 100) : 0;
 
@@ -620,7 +658,34 @@ export function getRuleScheduleMatchForDate(
     }
   }
 
-  // 4. Advance reminder window evaluation (0 = exact date only, N > 0 = check dateStr..dateStr+N)
+  // 4. Period cumulative benefit cap check: e.g. "月优惠封顶 ¥50"
+  if (rule.periodCapAmount && rule.periodCapAmount > 0 && existingRecords) {
+    const scope = rule.periodCapScope || 'month';
+    const doneInScope = existingRecords.filter((r) => {
+      if (r.ruleId !== rule.id || r.status !== 'done') return false;
+      if (scope === 'week') {
+        const { startOfWeek, endOfWeek } = getWeekDateRange(dateStr);
+        return r.date >= startOfWeek && r.date <= endOfWeek;
+      }
+      if (scope === 'month') {
+        return r.date.startsWith(dateStr.slice(0, 7));
+      }
+      if (scope === 'solarTerm') {
+        const { startDate, endDate } = lunarInfo.currentSolarTerm;
+        return r.date >= startDate && r.date <= endDate;
+      }
+      return true; // 'total'
+    });
+    const usedAmount = doneInScope.reduce((sum, r) => sum + (r.actual || 0), 0);
+    if (usedAmount >= rule.periodCapAmount - 1e-6) {
+      const isDoneOnThisDate = doneInScope.some((r) => r.date === dateStr);
+      if (!isDoneOnThisDate) {
+        return { matched: false };
+      }
+    }
+  }
+
+  // 5. Advance reminder window evaluation (0 = exact date only, N > 0 = check dateStr..dateStr+N)
   const advanceDays = rule.frequency === 'daily' ? 0 : Math.max(0, Math.floor(rule.remindAdvanceDays || 0));
 
   for (let offset = 0; offset <= advanceDays; offset++) {
@@ -664,7 +729,52 @@ export function isRuleScheduledForDate(
   return getRuleScheduleMatchForDate(rule, dateStr, existingRecords).matched;
 }
 
-// Automatically skip or suppress subsequent pending records of a rule when a limit or advance-reminder cycle is fulfilled
+// Compute how much benefit/count has been used for a rule in the period containing dateStr
+export function getRulePeriodCapUsage(
+  rule: TaskRule,
+  dateStr: string,
+  records: TaskRecord[]
+): { usedAmount: number; capAmount: number; remainingAmount: number; isCapReached: boolean; scopeLabel: string } | null {
+  if (!rule.periodCapAmount || rule.periodCapAmount <= 0) return null;
+  const scope = rule.periodCapScope || 'month';
+  const { startOfWeek, endOfWeek } = getWeekDateRange(dateStr);
+  const monthPrefix = dateStr.slice(0, 7);
+  const lunarInfo = getLunarDateInfo(dateStr);
+  const solarTermWindow = lunarInfo.currentSolarTerm;
+
+  const usedRaw = records
+    .filter((r) => {
+      if (r.ruleId !== rule.id || r.status !== 'done') return false;
+      if (scope === 'week') return r.date >= startOfWeek && r.date <= endOfWeek;
+      if (scope === 'month') return r.date.startsWith(monthPrefix);
+      if (scope === 'solarTerm') return r.date >= solarTermWindow.startDate && r.date <= solarTermWindow.endDate;
+      return true;
+    })
+    .reduce((sum, r) => sum + (r.actual || 0), 0);
+
+  const usedAmount = Math.round(usedRaw * 100) / 100;
+  const capAmount = Math.round(rule.periodCapAmount * 100) / 100;
+  const remainingAmount = Math.max(0, Math.round((capAmount - usedAmount) * 100) / 100);
+  const scopeLabel =
+    scope === 'week'
+      ? '本周封顶'
+      : scope === 'month'
+        ? '当月封顶'
+        : scope === 'solarTerm'
+          ? `${solarTermWindow.name}节气封顶`
+          : '总计封顶';
+
+  return {
+    usedAmount,
+    capAmount,
+    remainingAmount,
+    isCapReached: usedAmount >= capAmount - 1e-6,
+    scopeLabel,
+  };
+}
+
+// Automatically skip subsequent pending records when a limit/cap/advance cycle is fulfilled,
+// or restore auto-skipped records if a completed task was reverted below the limit.
 export function skipFutureLimitRecords(
   data: AppDataBackup,
   ruleId: string,
@@ -679,16 +789,44 @@ export function skipFutureLimitRecords(
   const lunarInfo = getLunarDateInfo(completedDate);
   const solarTermWindow = lunarInfo.currentSolarTerm;
 
+  const doneRecords = data.records.filter((r) => r.ruleId === ruleId && r.status === 'done');
+
+  const weekDoneCount = doneRecords.filter((r) => r.date >= startOfWeek && r.date <= endOfWeek).length;
+  const monthDoneCount = doneRecords.filter((r) => r.date.startsWith(monthPrefix)).length;
+  const solarTermDoneCount = doneRecords.filter(
+    (r) => r.date >= solarTermWindow.startDate && r.date <= solarTermWindow.endDate
+  ).length;
+
+  const weeklyLimitHit = !!(rule.weeklyLimit && rule.weeklyLimit > 0 && weekDoneCount >= rule.weeklyLimit);
+  const monthlyLimitHit = !!(rule.monthlyLimit && rule.monthlyLimit > 0 && monthDoneCount >= rule.monthlyLimit);
+  const solarTermLimitHit = !!(rule.solarTermLimit && rule.solarTermLimit > 0 && solarTermDoneCount >= rule.solarTermLimit);
+
+  const capUsage = getRulePeriodCapUsage(rule, completedDate, data.records);
+  const periodCapHit = !!capUsage?.isCapReached;
+  const capScope = rule.periodCapScope || 'month';
+
+  const advanceHasDoneInCycle = !!(
+    rule.remindAdvanceDays &&
+    rule.remindAdvanceDays > 0 &&
+    completedTargetDate &&
+    doneRecords.some(
+      (r) =>
+        r.targetDate === completedTargetDate ||
+        (r.date <= completedTargetDate && r.date >= addDays(completedTargetDate, -rule.remindAdvanceDays!))
+    )
+  );
+
   let changed = false;
 
   const newRecords = data.records.map((rec) => {
-    if (rec.ruleId === ruleId && rec.status === 'pending' && rec.date > completedDate) {
-      // 0. Check advance-reminder cycle completion
+    if (rec.ruleId !== ruleId) return rec;
+
+    // Case A: Future pending records -> skip if limit/cap/advance cycle is genuinely reached
+    if (rec.status === 'pending' && rec.date > completedDate) {
       if (
-        rule.remindAdvanceDays &&
-        rule.remindAdvanceDays > 0 &&
-        ((completedTargetDate && rec.targetDate === completedTargetDate) ||
-          (completedTargetDate && rec.date <= completedTargetDate))
+        advanceHasDoneInCycle &&
+        completedTargetDate &&
+        (rec.targetDate === completedTargetDate || rec.date <= completedTargetDate)
       ) {
         changed = true;
         return {
@@ -701,47 +839,102 @@ export function skipFutureLimitRecords(
         };
       }
 
-      // 1. Check weekly limit
-      if (rule.weeklyLimit && rule.weeklyLimit > 0) {
-        if (rec.date >= startOfWeek && rec.date <= endOfWeek) {
-          changed = true;
-          return {
-            ...rec,
-            status: 'skipped' as const,
-            weeklyLimitReached: true,
-            feedback: rec.feedback ? `${rec.feedback} (本周已达${rule.weeklyLimit}次上限)` : `本周已完成${rule.weeklyLimit}次，后续免提醒`,
-          };
-        }
+      if (weeklyLimitHit && rec.date >= startOfWeek && rec.date <= endOfWeek) {
+        changed = true;
+        return {
+          ...rec,
+          status: 'skipped' as const,
+          weeklyLimitReached: true,
+          feedback: rec.feedback ? `${rec.feedback} (本周已达${rule.weeklyLimit}次上限)` : `本周已完成${rule.weeklyLimit}次，后续免提醒`,
+        };
       }
 
-      // 2. Check monthly limit
-      if (rule.monthlyLimit && rule.monthlyLimit > 0) {
-        if (rec.date.startsWith(monthPrefix)) {
-          changed = true;
-          return {
-            ...rec,
-            status: 'skipped' as const,
-            monthlyLimitReached: true,
-            feedback: rec.feedback ? `${rec.feedback} (当月已达${rule.monthlyLimit}次上限)` : `当月已完成${rule.monthlyLimit}次，免提醒`,
-          };
-        }
+      if (monthlyLimitHit && rec.date.startsWith(monthPrefix)) {
+        changed = true;
+        return {
+          ...rec,
+          status: 'skipped' as const,
+          monthlyLimitReached: true,
+          feedback: rec.feedback ? `${rec.feedback} (当月已达${rule.monthlyLimit}次上限)` : `当月已完成${rule.monthlyLimit}次，免提醒`,
+        };
       }
 
-      // 3. Check solar term limit
-      if (rule.solarTermLimit && rule.solarTermLimit > 0) {
-        if (rec.date >= solarTermWindow.startDate && rec.date <= solarTermWindow.endDate) {
+      if (solarTermLimitHit && rec.date >= solarTermWindow.startDate && rec.date <= solarTermWindow.endDate) {
+        changed = true;
+        return {
+          ...rec,
+          status: 'skipped' as const,
+          solarTermLimitReached: true,
+          feedback: rec.feedback
+            ? `${rec.feedback} (${solarTermWindow.name}节气已达${rule.solarTermLimit}次)`
+            : `【${solarTermWindow.name}】节气已达${rule.solarTermLimit}次上限，免提醒`,
+        };
+      }
+
+      if (periodCapHit && capUsage) {
+        const inCapScope =
+          capScope === 'week'
+            ? rec.date >= startOfWeek && rec.date <= endOfWeek
+            : capScope === 'month'
+              ? rec.date.startsWith(monthPrefix)
+              : capScope === 'solarTerm'
+                ? rec.date >= solarTermWindow.startDate && rec.date <= solarTermWindow.endDate
+                : true;
+        if (inCapScope) {
           changed = true;
           return {
             ...rec,
             status: 'skipped' as const,
-            solarTermLimitReached: true,
+            capReachedSkipped: true,
             feedback: rec.feedback
-              ? `${rec.feedback} (${solarTermWindow.name}节气已达${rule.solarTermLimit}次)`
-              : `【${solarTermWindow.name}】节气已达${rule.solarTermLimit}次上限，免提醒`,
+              ? `${rec.feedback} (${capUsage.scopeLabel}已达¥${capUsage.capAmount})`
+              : `${capUsage.scopeLabel}额度已用满，本周期免提醒`,
           };
         }
       }
     }
+
+    // Case B: Previously auto-skipped future records -> restore to pending if user reverted completion
+    if (rec.status === 'skipped' && rec.date > completedDate) {
+      const shouldRestoreAdvance =
+        rec.advanceDoneSkipped &&
+        !advanceHasDoneInCycle &&
+        (!completedTargetDate || rec.targetDate === completedTargetDate || rec.date <= completedTargetDate);
+      const shouldRestoreWeekly =
+        rec.weeklyLimitReached && !weeklyLimitHit && rec.date >= startOfWeek && rec.date <= endOfWeek;
+      const shouldRestoreMonthly =
+        rec.monthlyLimitReached && !monthlyLimitHit && rec.date.startsWith(monthPrefix);
+      const shouldRestoreSolar =
+        rec.solarTermLimitReached &&
+        !solarTermLimitHit &&
+        rec.date >= solarTermWindow.startDate &&
+        rec.date <= solarTermWindow.endDate;
+      const shouldRestoreCap =
+        rec.capReachedSkipped &&
+        !periodCapHit &&
+        (capScope === 'week'
+          ? rec.date >= startOfWeek && rec.date <= endOfWeek
+          : capScope === 'month'
+            ? rec.date.startsWith(monthPrefix)
+            : capScope === 'solarTerm'
+              ? rec.date >= solarTermWindow.startDate && rec.date <= solarTermWindow.endDate
+              : true);
+
+      if (shouldRestoreAdvance || shouldRestoreWeekly || shouldRestoreMonthly || shouldRestoreSolar || shouldRestoreCap) {
+        changed = true;
+        return {
+          ...rec,
+          status: 'pending' as const,
+          advanceDoneSkipped: false,
+          weeklyLimitReached: false,
+          monthlyLimitReached: false,
+          solarTermLimitReached: false,
+          capReachedSkipped: false,
+          feedback: '',
+        };
+      }
+    }
+
     return rec;
   });
 

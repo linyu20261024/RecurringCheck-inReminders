@@ -254,10 +254,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       }
     > = {};
 
-    // Use records matching current month filter
-    const baseRecords = selectedMonth === 'all'
-      ? data.records
-      : data.records.filter((r) => r.date.startsWith(selectedMonth));
+    // Use records matching current month and search keyword filter
+    const baseRecords = data.records.filter((r) => {
+      if (selectedMonth !== 'all' && !r.date.startsWith(selectedMonth)) return false;
+      if (searchTableQuery.trim()) {
+        const q = searchTableQuery.toLowerCase();
+        const matchName = r.name.toLowerCase().includes(q);
+        const matchPlat = r.platform.toLowerCase().includes(q);
+        const matchDate = r.date.includes(q);
+        const matchFb = (r.feedback || '').toLowerCase().includes(q);
+        if (!matchName && !matchPlat && !matchDate && !matchFb) return false;
+      }
+      return true;
+    });
 
     baseRecords.forEach((r) => {
       if (!map[r.platform]) {
@@ -305,7 +314,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
       }))
       .filter((p) => p.cny > 0 || p.totalTasks > 0)
       .sort((a, b) => b.cny - a.cny || b.doneTasks - a.doneTasks);
-  }, [data.records, selectedMonth]);
+  }, [data.records, selectedMonth, searchTableQuery, todayStr]);
 
   // Category Breakdown (CNY cash only)
   const categoryBreakdown = useMemo(() => {
@@ -884,13 +893,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ data }) => {
               return (
                 <div
                   key={p.platform}
-                  onClick={() => setSelectedPlatform(p.platform)}
+                  onClick={() => setSelectedPlatform((prev) => (prev === p.platform ? 'all' : p.platform))}
                   className={`py-3 flex items-center justify-between gap-3 px-2 rounded-xl transition-colors cursor-pointer ${
                     selectedPlatform === p.platform
                       ? 'bg-indigo-50/80 border border-indigo-200'
                       : 'hover:bg-slate-50/80'
                   }`}
-                  title="点击按该平台过滤全部数据"
+                  title={selectedPlatform === p.platform ? '再次点击解除平台锁定' : '点击按该平台过滤全部数据'}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <span

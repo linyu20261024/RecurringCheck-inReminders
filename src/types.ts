@@ -36,6 +36,9 @@ export interface TaskRule {
   yearDay?: number;
   amount: number;
   currency: CurrencyType;
+  singleCapAmount?: number; // 单次优惠封顶金额/额度（选填，0或未定义表示不限单次封顶）
+  periodCapAmount?: number; // 周期累计优惠封顶金额/额度（选填，配合 periodCapScope 使用）
+  periodCapScope?: 'week' | 'month' | 'solarTerm' | 'total'; // 累计封顶周期范围：自然周 / 自然月 / 每个节气 / 规则总计
   priority: PriorityType;
   active: boolean;
   timeSensitive?: boolean; // 是否时间敏感（如特定时间点抢券/限时活动，列表将优先置顶提醒）
@@ -76,6 +79,7 @@ export interface TaskRecord {
   weeklyLimitReached?: boolean;  // 当周已达完成次数上限
   solarTermLimitReached?: boolean; // 当期节气已达完成次数上限
   advanceDoneSkipped?: boolean; // 已在提前提醒期间完成，本轮后续免提醒
+  capReachedSkipped?: boolean; // 已达周期优惠封顶金额，本周期后续免提醒
   createdAt?: string;
 }
 

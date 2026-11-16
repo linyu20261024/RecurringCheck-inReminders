@@ -85,12 +85,20 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
 
   const [formAmount, setFormAmount] = useState('0');
   const [formCurrency, setFormCurrency] = useState<CurrencyType>('CNY');
+  const [formSingleCapAmount, setFormSingleCapAmount] = useState('');
+  const [hasPeriodCap, setHasPeriodCap] = useState(false);
+  const [formPeriodCapAmount, setFormPeriodCapAmount] = useState('');
+  const [formPeriodCapScope, setFormPeriodCapScope] = useState<'week' | 'month' | 'solarTerm' | 'total'>('month');
+  const [formMonthlyPolicy, setFormMonthlyPolicy] = useState<'lastDay' | 'skip'>('skip');
+  const [formIntervalN, setFormIntervalN] = useState('2');
+  const [formIntervalUnit, setFormIntervalUnit] = useState<'day' | 'week'>('day');
   const [formPriority, setFormPriority] = useState<PriorityType>('中');
   const [formTime, setFormTime] = useState('09:00');
   const [formDeadline, setFormDeadline] = useState('23:59');
   const [formTimeSensitive, setFormTimeSensitive] = useState(false);
   const [formPath, setFormPath] = useState('');
   const [formNotes, setFormNotes] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Delete confirmation state
   const [deleteTargetRule, setDeleteTargetRule] = useState<TaskRule | null>(null);
@@ -116,7 +124,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         const matchName = r.name.toLowerCase().includes(q);
         const matchPlat = r.platform.toLowerCase().includes(q);
         const matchPath = (r.path || '').toLowerCase().includes(q);
-        if (!matchName && !matchPlat && !matchPath) return false;
+        const matchNotes = (r.notes || '').toLowerCase().includes(q);
+        const matchCategory = (r.category || '').toLowerCase().includes(q);
+        if (!matchName && !matchPlat && !matchPath && !matchNotes && !matchCategory) return false;
       }
       return true;
     });
@@ -124,6 +134,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
 
   const handleOpenAddModal = () => {
     setEditingRule(null);
+    setFormError(null);
     setFormName('');
     setFormPlatform('');
     setFormCategory('签到');
@@ -139,6 +150,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormSolarTermLimit('1');
     setFormWeekdays([]);
     setFormMonthdays('1');
+    setFormMonthlyPolicy('skip');
+    setFormIntervalN('2');
+    setFormIntervalUnit('day');
     const [, curM, curD] = currentDate.split('-').map((n) => parseInt(n, 10));
     setFormSolarMonths([curM || 1]);
     setFormYearlyDays([curD || 1]);
@@ -152,6 +166,10 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormSolarTerms([...ALL_SOLAR_TERMS]);
     setFormAmount('0');
     setFormCurrency('CNY');
+    setFormSingleCapAmount('');
+    setHasPeriodCap(false);
+    setFormPeriodCapAmount('');
+    setFormPeriodCapScope('month');
     setFormPriority('中');
     setFormTime('09:00');
     setFormDeadline('23:59');
@@ -163,6 +181,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
 
   const handleOpenEditModal = (rule: TaskRule) => {
     setEditingRule(rule);
+    setFormError(null);
     setFormName(rule.name);
     setFormPlatform(rule.platform);
     setFormCategory(rule.category);
@@ -178,6 +197,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormSolarTermLimit(rule.solarTermLimit ? String(rule.solarTermLimit) : '1');
     setFormWeekdays(rule.weekdays || []);
     setFormMonthdays((rule.monthdays || []).join(', ') || '1');
+    setFormMonthlyPolicy(rule.monthPolicy === 'lastDay' ? 'lastDay' : 'skip');
+    setFormIntervalN(rule.intervalN ? String(rule.intervalN) : '2');
+    setFormIntervalUnit(rule.unit === 'week' ? 'week' : 'day');
     setFormSolarMonths(
       rule.solarMonths && rule.solarMonths.length > 0
         ? [...rule.solarMonths]
@@ -203,6 +225,10 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
     setFormSolarTerms(rule.solarTerms && rule.solarTerms.length > 0 ? rule.solarTerms : [...ALL_SOLAR_TERMS]);
     setFormAmount(String(rule.amount ?? 0));
     setFormCurrency(rule.currency);
+    setFormSingleCapAmount(rule.singleCapAmount && rule.singleCapAmount > 0 ? String(rule.singleCapAmount) : '');
+    setHasPeriodCap(!!rule.periodCapAmount && rule.periodCapAmount > 0);
+    setFormPeriodCapAmount(rule.periodCapAmount && rule.periodCapAmount > 0 ? String(rule.periodCapAmount) : '');
+    setFormPeriodCapScope(rule.periodCapScope || 'month');
     setFormPriority(rule.priority);
     setFormTime(rule.time || '09:00');
     setFormDeadline(rule.deadline || '23:59');
@@ -213,21 +239,49 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
   };
 
   const handleSaveRule = () => {
-    if (!formName.trim() || !formPlatform.trim()) return;
+    if (!formPlatform.trim()) {
+      setFormError('请填写「所属平台 / 分类对象」');
+      return;
+    }
+    if (!formName.trim()) {
+      setFormError('请填写「任务名称」');
+      return;
+    }
+
+    const cleanStartDate = formStartDate || currentDate;
+    const cleanEndDate = hasEndDate && formEndDate.trim() ? formEndDate.trim() : undefined;
+    if (cleanEndDate && cleanEndDate < cleanStartDate) {
+      setFormError('结束截止日期不能早于开始生效日期');
+      return;
+    }
 
     const amt = parseFloat(formAmount);
+    const parsedSingleCap = parseFloat(formSingleCapAmount);
+    const parsedPeriodCap = hasPeriodCap ? parseFloat(formPeriodCapAmount) : NaN;
+    if (hasPeriodCap && (isNaN(parsedPeriodCap) || parsedPeriodCap <= 0)) {
+      setFormError('已开启周期累计优惠封顶，请填写大于 0 的封顶金额');
+      return;
+    }
+
     const parsedMonthDays = formMonthdays
       .split(/[,， ]+/)
       .map((d) => parseInt(d.trim(), 10))
       .filter((n) => !isNaN(n) && n >= 1 && n <= 31);
 
+    if (formFrequency === 'monthly' && parsedMonthDays.length === 0) {
+      setFormError('请至少输入 1 个有效的公历每月日期（1–31）');
+      return;
+    }
+
+    setFormError(null);
+
     const now = new Date().toISOString();
-    const cleanEndDate = hasEndDate && formEndDate.trim() ? formEndDate.trim() : undefined;
     const parsedMonthlyLimit = hasMonthlyLimit ? Math.max(1, parseInt(formMonthlyLimit, 10) || 1) : undefined;
     const parsedWeeklyLimit = hasWeeklyLimit ? Math.max(1, parseInt(formWeeklyLimit, 10) || 1) : undefined;
     const parsedSolarTermLimit = hasSolarTermLimit ? Math.max(1, parseInt(formSolarTermLimit, 10) || 1) : undefined;
     const parsedAdvanceDays =
       formFrequency === 'daily' ? 0 : Math.max(0, Math.min(90, parseInt(formRemindAdvanceDays, 10) || 0));
+    const parsedIntervalN = Math.max(1, parseInt(formIntervalN, 10) || 1);
     const cleanTime = formTime.trim() || '09:00';
     const cleanDeadline = formDeadline.trim() || '23:59';
 
@@ -255,6 +309,16 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
           : [1]
         : [];
 
+    const resolvedMonthPolicy =
+      formFrequency === 'yearly'
+        ? formYearlyLastDayPolicy
+        : formFrequency === 'monthly'
+          ? formMonthlyPolicy
+          : editingRule?.monthPolicy || 'skip';
+
+    const cleanSingleCap = !isNaN(parsedSingleCap) && parsedSingleCap > 0 ? parsedSingleCap : undefined;
+    const cleanPeriodCap = hasPeriodCap && !isNaN(parsedPeriodCap) && parsedPeriodCap > 0 ? parsedPeriodCap : undefined;
+
     if (editingRule) {
       const updated: TaskRule = {
         ...editingRule,
@@ -274,7 +338,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
         solarMonths: finalSolarMonths,
         monthdays: finalMonthdays,
-        monthPolicy: formFrequency === 'yearly' ? formYearlyLastDayPolicy : editingRule.monthPolicy || 'skip',
+        monthPolicy: resolvedMonthPolicy,
+        intervalN: formFrequency === 'interval' ? parsedIntervalN : editingRule.intervalN,
+        unit: formFrequency === 'interval' ? formIntervalUnit : editingRule.unit,
         lunarMonths: finalLunarMonths,
         lunarMonthdays: finalLunarDays,
         lunarIncludeLeapMonth: formFrequency === 'lunar' ? formLunarIncludeLeap : false,
@@ -282,6 +348,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         solarTerms: formFrequency === 'solar' ? formSolarTerms : [],
         amount: isNaN(amt) ? 0 : amt,
         currency: formCurrency,
+        singleCapAmount: cleanSingleCap,
+        periodCapAmount: cleanPeriodCap,
+        periodCapScope: cleanPeriodCap ? formPeriodCapScope : undefined,
         priority: formPriority,
         path: formPath.trim(),
         notes: formNotes.trim(),
@@ -295,7 +364,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         platform: formPlatform.trim(),
         category: formCategory,
         frequency: formFrequency,
-        startDate: formStartDate || currentDate,
+        startDate: cleanStartDate,
         endDate: cleanEndDate,
         time: cleanTime,
         deadline: cleanDeadline,
@@ -307,7 +376,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         weekdays: formFrequency === 'weekly' ? formWeekdays : [],
         solarMonths: finalSolarMonths,
         monthdays: finalMonthdays,
-        monthPolicy: formFrequency === 'yearly' ? formYearlyLastDayPolicy : 'skip',
+        monthPolicy: resolvedMonthPolicy,
+        intervalN: formFrequency === 'interval' ? parsedIntervalN : undefined,
+        unit: formFrequency === 'interval' ? formIntervalUnit : undefined,
         lunarMonths: finalLunarMonths,
         lunarMonthdays: finalLunarDays,
         lunarIncludeLeapMonth: formFrequency === 'lunar' ? formLunarIncludeLeap : false,
@@ -315,6 +386,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
         solarTerms: formFrequency === 'solar' ? formSolarTerms : [],
         amount: isNaN(amt) ? 0 : amt,
         currency: formCurrency,
+        singleCapAmount: cleanSingleCap,
+        periodCapAmount: cleanPeriodCap,
+        periodCapScope: cleanPeriodCap ? formPeriodCapScope : undefined,
         priority: formPriority,
         active: true,
         path: formPath.trim(),
@@ -441,6 +515,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
             <option value="yearly">公历每年 (yearly)</option>
             <option value="lunar">农历每年/每月 (lunar)</option>
             <option value="solar">节气 (solar)</option>
+            <option value="interval">每隔 N 天/周 (interval)</option>
             <option value="once">单次 (once)</option>
           </select>
         </div>
@@ -515,6 +590,23 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                             提前{r.remindAdvanceDays}天
                           </span>
                         )}
+                        {r.singleCapAmount && r.singleCapAmount > 0 && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                            单次封顶{r.currency === 'CNY' ? `¥${r.singleCapAmount}` : r.singleCapAmount}
+                          </span>
+                        )}
+                        {r.periodCapAmount && r.periodCapAmount > 0 && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {r.periodCapScope === 'week'
+                              ? '周'
+                              : r.periodCapScope === 'solarTerm'
+                                ? '节气'
+                                : r.periodCapScope === 'total'
+                                  ? '总'
+                                  : '月'}
+                            封顶{r.currency === 'CNY' ? `¥${r.periodCapAmount}` : r.periodCapAmount}
+                          </span>
+                        )}
                       </div>
 
                       {/* Schedule & Time info */}
@@ -527,7 +619,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                         <span>
                           {r.frequency === 'daily' && '每日'}
                           {r.frequency === 'weekly' &&
-                            `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
+                            (r.weekdays && r.weekdays.length > 0
+                              ? `每周 ${r.weekdays.map((w) => `周${weekdayLabels[w]}`).join('、')}`
+                              : '每周（每日触发）')}
                           {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
                           {r.frequency === 'yearly' &&
                             formatGregorianYearlyText(r.monthdays, r.solarMonths)}
@@ -535,6 +629,8 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                             formatLunarScheduleText(r.lunarMonthdays, r.lunarMonths)}
                           {r.frequency === 'solar' &&
                             `${(r.solarTerms || []).length === 24 || !(r.solarTerms?.length) ? '24节气活动' : (r.solarTerms || []).join('、')}`}
+                          {r.frequency === 'interval' &&
+                            `每 ${r.intervalN || 1} ${r.unit === 'week' ? '周' : '天'}`}
                           {r.frequency === 'once' && '单次'}
                         </span>
                         <span className="text-slate-300">·</span>
@@ -557,6 +653,11 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                           ? `¥${(r.amount || 0).toFixed(2)}`
                           : `${(r.amount || 0).toLocaleString()} 分`}
                       </div>
+                      {((r.singleCapAmount && r.singleCapAmount > 0) || (r.periodCapAmount && r.periodCapAmount > 0)) && (
+                        <div className="text-[10px] text-teal-700 font-medium tabular-nums">
+                          封顶{r.periodCapAmount ? ` ${r.currency === 'CNY' ? `¥${r.periodCapAmount}` : r.periodCapAmount}` : ` ${r.currency === 'CNY' ? `¥${r.singleCapAmount}` : r.singleCapAmount}`}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -675,6 +776,23 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                               提前{r.remindAdvanceDays}天
                             </span>
                           )}
+                          {r.singleCapAmount && r.singleCapAmount > 0 && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                              单次封顶{r.currency === 'CNY' ? `¥${r.singleCapAmount}` : r.singleCapAmount}
+                            </span>
+                          )}
+                          {r.periodCapAmount && r.periodCapAmount > 0 && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              {r.periodCapScope === 'week'
+                                ? '周'
+                                : r.periodCapScope === 'solarTerm'
+                                  ? '节气'
+                                  : r.periodCapScope === 'total'
+                                    ? '总'
+                                    : '月'}
+                              封顶{r.currency === 'CNY' ? `¥${r.periodCapAmount}` : r.periodCapAmount}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-400">
                           <span>{r.category}</span>
@@ -691,7 +809,9 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                         <div className="text-[11px] text-slate-500 mt-0.5">
                           {r.frequency === 'daily' && '每日'}
                           {r.frequency === 'weekly' &&
-                            `每周 ${(r.weekdays || []).map((w) => `周${weekdayLabels[w]}`).join('、')}`}
+                            (r.weekdays && r.weekdays.length > 0
+                              ? `每周 ${r.weekdays.map((w) => `周${weekdayLabels[w]}`).join('、')}`
+                              : '每周（每日触发）')}
                           {r.frequency === 'monthly' && `每月 ${(r.monthdays || []).join('、')}日`}
                           {r.frequency === 'yearly' &&
                             formatGregorianYearlyText(r.monthdays, r.solarMonths)}
@@ -699,6 +819,8 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                             formatLunarScheduleText(r.lunarMonthdays, r.lunarMonths)}
                           {r.frequency === 'solar' &&
                             `${(r.solarTerms || []).length === 24 || !(r.solarTerms?.length) ? '24节气活动' : (r.solarTerms || []).join('、')}`}
+                          {r.frequency === 'interval' &&
+                            `每 ${r.intervalN || 1} ${r.unit === 'week' ? '周' : '天'}`}
                           {r.frequency === 'once' && '单次'}
                         </div>
                       </td>
@@ -710,9 +832,20 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4 font-bold tabular-nums text-indigo-700">
-                        {r.currency === 'CNY'
-                          ? `¥${(r.amount || 0).toFixed(2)}`
-                          : `${(r.amount || 0).toLocaleString()} 积分`}
+                        <div>
+                          {r.currency === 'CNY'
+                            ? `¥${(r.amount || 0).toFixed(2)}`
+                            : `${(r.amount || 0).toLocaleString()} 积分`}
+                        </div>
+                        {((r.singleCapAmount && r.singleCapAmount > 0) || (r.periodCapAmount && r.periodCapAmount > 0)) && (
+                          <div className="text-[10px] font-medium text-teal-700 mt-0.5">
+                            {r.singleCapAmount ? `单笔≤${r.currency === 'CNY' ? `¥${r.singleCapAmount}` : r.singleCapAmount}` : ''}
+                            {r.singleCapAmount && r.periodCapAmount ? ' · ' : ''}
+                            {r.periodCapAmount
+                              ? `${r.periodCapScope === 'week' ? '周' : r.periodCapScope === 'solarTerm' ? '节气' : r.periodCapScope === 'total' ? '总' : '月'}封顶${r.currency === 'CNY' ? `¥${r.periodCapAmount}` : r.periodCapAmount}`
+                              : ''}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-500 max-w-xs truncate text-[11px]">
                         {r.path || '-'}
@@ -923,6 +1056,7 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                     <option value="yearly">公历每年 · 生日/纪念日 (yearly)</option>
                     <option value="lunar">农历每年/每月 (lunar)</option>
                     <option value="solar">中国二十四节气 (solar)</option>
+                    <option value="interval">每隔 N 天/周 (interval)</option>
                     <option value="once">单次 (once)</option>
                   </select>
                 </div>
@@ -1129,13 +1263,18 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                       </button>
                     ))}
                   </div>
+                  {formWeekdays.length === 0 && (
+                    <p className="text-[11px] text-amber-700 mt-1">
+                      提示：当前未勾选特定星期，将在周一至周日每天触发（常与上方「限制自然周最多完成次数」配合使用）。
+                    </p>
+                  )}
                 </div>
               )}
 
               {/* Monthly Day Selector (Solar) */}
               {formFrequency === 'monthly' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-600">
                     公历每月哪几天提醒 (逗号隔开，例: 1, 10, 15, 20)
                   </label>
                   <input
@@ -1145,6 +1284,52 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                     placeholder="1, 10, 15"
                     className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden"
                   />
+                  <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formMonthlyPolicy === 'lastDay'}
+                      onChange={(e) => setFormMonthlyPolicy(e.target.checked ? 'lastDay' : 'skip')}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>遇小月无 29/30/31 日时，自动顺延至当月最后一天提醒</span>
+                  </label>
+                </div>
+              )}
+
+              {/* Custom Interval Selector */}
+              {formFrequency === 'interval' && (
+                <div className="p-3 bg-indigo-50/50 border border-indigo-200 rounded-xl space-y-2">
+                  <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <Repeat className="w-3.5 h-3.5 text-indigo-600" />
+                    固定间隔周期设定（从上方「开始生效日期」起算）
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-700">每隔</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={formIntervalN}
+                      onChange={(e) => setFormIntervalN(e.target.value)}
+                      className="w-20 px-2.5 py-1 bg-white border border-indigo-300 rounded-xl text-xs font-bold tabular-nums text-indigo-900 focus:outline-hidden text-center"
+                    />
+                    <select
+                      value={formIntervalUnit}
+                      onChange={(e) => setFormIntervalUnit(e.target.value as 'day' | 'week')}
+                      className="px-2.5 py-1 bg-white border border-indigo-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-hidden"
+                    >
+                      <option value="day">天</option>
+                      <option value="week">周</option>
+                    </select>
+                    <span className="text-xs text-slate-700">触发一次</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Once Task Hint */}
+              {formFrequency === 'once' && (
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600">
+                  📌 单次任务将在上方设定的「开始生效日期」（<strong>{formStartDate || currentDate}</strong>）当天触发提醒，支持配置提前提醒天数。
                 </div>
               )}
 
@@ -1598,29 +1783,87 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                 </div>
               )}
 
-              {/* Amount and Currency */}
-              <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">预期收益额</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={formAmount}
-                    onChange={(e) => setFormAmount(e.target.value)}
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs font-bold tabular-nums text-slate-800 focus:outline-hidden"
-                  />
+              {/* Amount, Currency & Benefit Cap (优惠封顶设置) */}
+              <div className="p-3 bg-teal-50/50 border border-teal-200/80 rounded-xl space-y-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">预期单次收益/优惠</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={formAmount}
+                      onChange={(e) => setFormAmount(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-bold tabular-nums text-slate-800 focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      单次优惠封顶 (选填)
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={formSingleCapAmount}
+                      onChange={(e) => setFormSingleCapAmount(e.target.value)}
+                      placeholder="留空表示不限"
+                      className="w-full px-3 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold tabular-nums text-teal-900 focus:outline-hidden"
+                    />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">收益计量单位</label>
+                    <select
+                      value={formCurrency}
+                      onChange={(e) => setFormCurrency(e.target.value as CurrencyType)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs text-slate-700 focus:outline-hidden bg-white"
+                    >
+                      <option value="CNY">CNY (元人民币)</option>
+                      <option value="points">points (积分/积点)</option>
+                      <option value="other">other (时长/礼券)</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">收益计量单位</label>
-                  <select
-                    value={formCurrency}
-                    onChange={(e) => setFormCurrency(e.target.value as CurrencyType)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs text-slate-700 focus:outline-hidden bg-white"
-                  >
-                    <option value="CNY">CNY (元人民币)</option>
-                    <option value="points">points (积分/积点)</option>
-                    <option value="other">other (时长/礼券)</option>
-                  </select>
+
+                <div className="border-t border-teal-200/60 pt-2 space-y-1.5">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-teal-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hasPeriodCap}
+                      onChange={(e) => setHasPeriodCap(e.target.checked)}
+                      className="rounded border-teal-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span>开启周期累计优惠封顶（用满封顶额度后，该周期自动免提醒）</span>
+                  </label>
+                  {hasPeriodCap && (
+                    <div className="flex items-center gap-2 pl-5 flex-wrap">
+                      <select
+                        value={formPeriodCapScope}
+                        onChange={(e) =>
+                          setFormPeriodCapScope(e.target.value as 'week' | 'month' | 'solarTerm' | 'total')
+                        }
+                        className="px-2 py-1 bg-white border border-teal-300 rounded-lg text-xs font-semibold text-teal-900 focus:outline-hidden"
+                      >
+                        <option value="month">每个自然月封顶</option>
+                        <option value="week">每个自然周封顶</option>
+                        <option value="solarTerm">每个节气封顶</option>
+                        <option value="total">规则全期总封顶</option>
+                      </select>
+                      <span className="text-xs text-teal-800">最高累计</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={formPeriodCapAmount}
+                        onChange={(e) => setFormPeriodCapAmount(e.target.value)}
+                        placeholder="例: 50"
+                        className="w-24 px-2.5 py-1 bg-white border border-teal-300 rounded-lg text-xs font-bold tabular-nums text-teal-900 focus:outline-hidden"
+                      />
+                      <span className="text-xs text-teal-800 font-medium">
+                        {formCurrency === 'CNY' ? '元' : formCurrency === 'points' ? '积分' : '单位'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1649,6 +1892,14 @@ export const RuleManagerView: React.FC<RuleManagerViewProps> = ({
                   className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden resize-none"
                 />
               </div>
+
+              {/* Validation Error Banner */}
+              {formError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
             </div>
 
             <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2 shrink-0">

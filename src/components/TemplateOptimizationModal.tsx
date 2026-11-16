@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { AppDataBackup } from '../types';
-import { analyzeTemplateOptimization, exportDataAsJson } from '../services/dataStorage';
+import { analyzeTemplateOptimization, buildOptimizedBackup, exportDataAsJson } from '../services/dataStorage';
 import {
   Sparkles,
   Download,
@@ -27,37 +27,7 @@ export const TemplateOptimizationModal: React.FC<TemplateOptimizationModalProps>
 
   // Export compact optimized JSON
   const handleExportOptimized = () => {
-    const compactRecords = data.records.map((rec) => ({
-      id: rec.id,
-      ruleId: rec.ruleId,
-      date: rec.date,
-      status: rec.status,
-      actual: rec.actual,
-      expected: rec.expected,
-      completedAt: rec.completedAt,
-      feedback: rec.feedback || undefined,
-    }));
-
-    const compactRules = data.rules.map((rule) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const r: any = { ...rule };
-      if (r.frequency !== 'interval') {
-        delete r.intervalN;
-        delete r.unit;
-      }
-      if (r.frequency !== 'solar') {
-        delete r.solarTerms;
-      }
-      return r;
-    });
-
-    const optimizedData: AppDataBackup = {
-      version: 3,
-      rules: compactRules,
-      records: compactRecords as typeof data.records,
-      _savedAt: Date.now(),
-    };
-
+    const optimizedData = buildOptimizedBackup(data);
     exportDataAsJson(optimizedData, `周期任务_优化范式版v3_${new Date().toISOString().slice(0, 10)}.json`);
   };
 
@@ -231,7 +201,7 @@ export const TemplateOptimizationModal: React.FC<TemplateOptimizationModalProps>
                       App 操作路径面包屑标准化与一键复制唤起
                     </h4>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>优化说明：</strong>统一采用层级面包屑格式（如 <code className="font-mono text-xs text-slate-700">首页 -&gt; 酷玩中心 -&gt; 签到</code>），支持一键复制路径，并在按 App 聚合时提供该应用「一键批量打卡」，最大化节省打卡时间。
+                      <strong>优化说明：</strong>统一采用层级面包屑格式（如 <code className="font-mono text-xs text-slate-700">首页 -&gt; 活动中心 -&gt; 任务打卡</code>），支持一键复制路径，并在按 App 聚合时提供该应用「一键批量打卡」，最大化节省打卡时间。
                     </p>
                   </div>
                 </div>

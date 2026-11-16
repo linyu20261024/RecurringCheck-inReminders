@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { TaskRecord, TaskRule } from '../types';
-import { evaluateFormula } from '../services/dataStorage';
-import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, CalendarOff, Bell } from 'lucide-react';
+import { evaluateFormula, getRulePeriodCapUsage } from '../services/dataStorage';
+import { X, CheckCircle2, Calculator, AlertCircle, Ban, Clock, Bell, ShieldCheck } from 'lucide-react';
 
 interface QuickCheckInModalProps {
   record: TaskRecord;
   rule?: TaskRule;
+  allRecords?: TaskRecord[];
   isOpen: boolean;
   onClose: () => void;
   onSave: (updatedRecord: TaskRecord, skipRestOfMonth?: boolean) => void;
@@ -14,13 +15,19 @@ interface QuickCheckInModalProps {
 export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   record,
   rule,
+  allRecords,
   isOpen,
   onClose,
   onSave,
 }) => {
-  const [actualInput, setActualInput] = useState<string>(
-    record.actual !== undefined && record.actual > 0 ? String(record.actual) : ''
-  );
+  const getInitialActual = (rec: TaskRecord) => {
+    if (rec.status === 'done' && rec.actual !== undefined) {
+      return String(rec.actual);
+    }
+    return rec.actual !== undefined && rec.actual > 0 ? String(rec.actual) : '';
+  };
+
+  const [actualInput, setActualInput] = useState<string>(() => getInitialActual(record));
   const [formulaExpr, setFormulaExpr] = useState<string>(record.feedback || '');
   const [notes, setNotes] = useState<string>(record.notes || '');
   const [status, setStatus] = useState<TaskRecord['status']>(record.status || 'done');
@@ -28,14 +35,46 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
 
   // Update input if record changes
   useEffect(() => {
-    setActualInput(record.actual !== undefined && record.actual > 0 ? String(record.actual) : '');
+    setActualInput(getInitialActual(record));
     setFormulaExpr(record.feedback || '');
     setNotes(record.notes || '');
     setStatus(record.status === 'pending' ? 'done' : record.status);
     setSkipRestOfMonth(true);
   }, [record]);
 
+  const capUsage = useMemo(() => {
+    if (!rule || !allRecords) return null;
+    return getRulePeriodCapUsage(rule, record.date, allRecords);
+  }, [rule, allRecords, record.date]);
+
+  // Available remaining cap excluding this record's already-counted amount (if editing a done record)
+  const availableForThisRecord = useMemo(() => {
+    if (!capUsage) return null;
+    const priorContribution = record.status === 'done' ? record.actual || 0 : 0;
+    return Math.max(0, Math.round((capUsage.remainingAmount + priorContribution) * 100) / 100);
+  }, [capUsage, record.status, record.actual]);
+
+  const formatCapVal = (val: number) => {
+    if (record.currency === 'CNY') return `¥${val.toFixed(2).replace(/\.00$/, '')}`;
+    if (record.currency === 'points') return `${val} 积分`;
+    return `${val}`;
+  };
+
   if (!isOpen) return null;
+
+  const parsedActual = actualInput.trim() ? parseFloat(actualInput) : 0;
+  const numericActual = isNaN(parsedActual) ? 0 : parsedActual;
+
+  const exceedsSingleCap =
+    status === 'done' &&
+    !!rule?.singleCapAmount &&
+    rule.singleCapAmount > 0 &&
+    numericActual > rule.singleCapAmount + 1e-6;
+
+  const exceedsPeriodCap =
+    status === 'done' &&
+    availableForThisRecord !== null &&
+    numericActual > availableForThisRecord + 1e-6;
 
   // Auto-evaluate formula if user types math expression in formulaExpr
   const handleFormulaChange = (val: string) => {
@@ -47,8 +86,24 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   };
 
   const handleFillExpected = () => {
-    const exp = record.expected ?? rule?.amount ?? 0;
-    setActualInput(String(exp));
+    let exp = record.expected ?? rule?.amount ?? 0;
+    if (rule?.singleCapAmount && rule.singleCapAmount > 0) {
+      exp = Math.min(exp, rule.singleCapAmount);
+    }
+    if (availableForThisRecord !== null) {
+      exp = Math.min(exp, availableForThisRecord);
+    }
+    setActualInput(String(Math.round(exp * 100) / 100));
+    setStatus('done');
+  };
+
+  const handleFillRemainingCap = () => {
+    if (availableForThisRecord === null) return;
+    let val = availableForThisRecord;
+    if (rule?.singleCapAmount && rule.singleCapAmount > 0) {
+      val = Math.min(val, rule.singleCapAmount);
+    }
+    setActualInput(String(Math.round(val * 100) / 100));
     setStatus('done');
   };
 
@@ -65,16 +120,49 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
       received: status === 'done' && num > 0,
     };
     const shouldAutoSkip =
-      !!rule?.monthlyLimit ||
-      !!rule?.weeklyLimit ||
-      !!rule?.solarTermLimit ||
+      (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
+      (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
+      (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+      (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
       (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
     onSave(updated, shouldAutoSkip ? skipRestOfMonth : false);
     onClose();
   };
 
   const isMonthlyLimitRule = !!rule?.monthlyLimit && rule.monthlyLimit > 0;
+  const isWeeklyLimitRule = !!rule?.weeklyLimit && rule.weeklyLimit > 0;
+  const isSolarTermLimitRule = !!rule?.solarTermLimit && rule.solarTermLimit > 0;
+  const isPeriodCapRule = !!rule?.periodCapAmount && rule.periodCapAmount > 0;
   const isAdvanceReminderRule = !!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0;
+  const hasAnyCycleCap =
+    isMonthlyLimitRule ||
+    isWeeklyLimitRule ||
+    isSolarTermLimitRule ||
+    isPeriodCapRule ||
+    isAdvanceReminderRule;
+
+  const buildAutoSkipCopy = (): { title: string; desc: string } => {
+    const parts: string[] = [];
+    if (isWeeklyLimitRule) parts.push(`每周限 ${rule?.weeklyLimit} 次`);
+    if (isMonthlyLimitRule) parts.push(`每月限 ${rule?.monthlyLimit} 次`);
+    if (isSolarTermLimitRule) parts.push(`每节气限 ${rule?.solarTermLimit} 次`);
+    if (isPeriodCapRule && capUsage) parts.push(`${capUsage.scopeLabel} ¥${capUsage.capAmount}`);
+    if (isAdvanceReminderRule) parts.push(`提前 ${rule?.remindAdvanceDays} 天提醒`);
+
+    if (isAdvanceReminderRule && parts.length === 1) {
+      return {
+        title: '已提前办理完成，本轮正日前自动免提醒',
+        desc: '勾选后，距本次目标正日前的其余提前提醒日将自动跳过，不再重复弹出。',
+      };
+    }
+
+    return {
+      title: '达到本周期次数或封顶上限后，自动免提醒后续待办',
+      desc: `当前规则已设置「${parts.join(' / ')}」。勾选后一旦达标或额度用满，本周期剩余日期将自动跳过；若后续撤回打卡会自动恢复待办。`,
+    };
+  };
+
+  const autoSkipCopy = buildAutoSkipCopy();
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-xs p-0 sm:p-4">
@@ -112,15 +200,33 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                 </span>
               )}
 
-              {rule?.weeklyLimit && rule.weeklyLimit > 0 && (
+              {isWeeklyLimitRule && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60">
-                  周限{rule.weeklyLimit}次
+                  周限{rule?.weeklyLimit}次
                 </span>
               )}
 
-              {rule?.solarTermLimit && rule.solarTermLimit > 0 && (
+              {isSolarTermLimitRule && (
                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-purple-50 text-purple-700 border border-purple-200/60">
-                  节气限{rule.solarTermLimit}次
+                  节气限{rule?.solarTermLimit}次
+                </span>
+              )}
+
+              {rule?.singleCapAmount && rule.singleCapAmount > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-teal-50 text-teal-700 border border-teal-200/70">
+                  单次封顶 {formatCapVal(rule.singleCapAmount)}
+                </span>
+              )}
+
+              {capUsage && (
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${
+                    capUsage.isCapReached
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-cyan-50 text-cyan-800 border-cyan-200/70'
+                  }`}
+                >
+                  {capUsage.scopeLabel} {formatCapVal(capUsage.usedAmount)}/{formatCapVal(capUsage.capAmount)}
                 </span>
               )}
 
@@ -171,6 +277,37 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
             </div>
           )}
 
+          {/* Cap quota summary box */}
+          {(rule?.singleCapAmount || capUsage) && (
+            <div className="p-2.5 rounded-xl bg-teal-50/70 border border-teal-200/70 text-xs text-teal-950 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 flex-1">
+                <div className="font-semibold flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  {rule?.singleCapAmount && rule.singleCapAmount > 0 && (
+                    <span>单次封顶: {formatCapVal(rule.singleCapAmount)}</span>
+                  )}
+                  {capUsage && (
+                    <span>
+                      {capUsage.scopeLabel}: {formatCapVal(capUsage.capAmount)}（已享 {formatCapVal(capUsage.usedAmount)}，剩余 {formatCapVal(capUsage.remainingAmount)}）
+                    </span>
+                  )}
+                </div>
+                {capUsage && (
+                  <div className="w-full bg-teal-100 rounded-full h-1.5 mt-1 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        capUsage.isCapReached ? 'bg-emerald-600' : 'bg-teal-500'
+                      }`}
+                      style={{
+                        width: `${Math.min(100, Math.round((capUsage.usedAmount / Math.max(0.01, capUsage.capAmount)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Status selector */}
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">任务状态</label>
@@ -218,19 +355,30 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
           {status === 'done' && (
             <div className="space-y-3 pt-1">
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
                   <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
                     实际到账收益 ({record.currency})
                   </label>
-                  {(record.expected ?? rule?.amount ?? 0) > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleFillExpected}
-                      className="text-[11px] text-indigo-600 hover:text-indigo-700 font-medium hover:underline"
-                    >
-                      填入预期 ({(record.expected ?? rule?.amount ?? 0)} {record.currency})
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2.5">
+                    {availableForThisRecord !== null && availableForThisRecord > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleFillRemainingCap}
+                        className="text-[11px] text-teal-700 hover:text-teal-800 font-medium hover:underline"
+                      >
+                        填入可享封顶 ({formatCapVal(availableForThisRecord)})
+                      </button>
+                    )}
+                    {(record.expected ?? rule?.amount ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleFillExpected}
+                        className="text-[11px] text-indigo-600 hover:text-indigo-700 font-medium hover:underline"
+                      >
+                        填入预期 ({(record.expected ?? rule?.amount ?? 0)} {record.currency})
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="relative">
                   <input
@@ -239,12 +387,32 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                     value={actualInput}
                     onChange={(e) => setActualInput(e.target.value)}
                     placeholder="0.00"
-                    className="w-full pl-3 pr-14 py-2 border border-slate-300 rounded-xl text-sm font-semibold tabular-nums focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className={`w-full pl-3 pr-14 py-2 border rounded-xl text-sm font-semibold tabular-nums focus:outline-hidden focus:ring-2 ${
+                      exceedsSingleCap || exceedsPeriodCap
+                        ? 'border-amber-400 focus:ring-amber-500 focus:border-amber-500 bg-amber-50/30'
+                        : 'border-slate-300 focus:ring-indigo-500 focus:border-indigo-500'
+                    }`}
                   />
                   <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-medium">
                     {record.currency}
                   </span>
                 </div>
+
+                {(exceedsSingleCap || exceedsPeriodCap) && (
+                  <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      {exceedsSingleCap && rule?.singleCapAmount && (
+                        <div>输入数值已超出「单次封顶 {formatCapVal(rule.singleCapAmount)}」，请确认是否为实际到账。</div>
+                      )}
+                      {exceedsPeriodCap && capUsage && availableForThisRecord !== null && (
+                        <div>
+                          输入数值已超出「{capUsage.scopeLabel}」本次剩余可用额度 ({formatCapVal(availableForThisRecord)})。
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Formula & Calculation helper */}
@@ -264,8 +432,8 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                 />
               </div>
 
-              {/* Monthly Limit / Advance Reminder: Option to auto-skip remaining cycle */}
-              {(isMonthlyLimitRule || isAdvanceReminderRule) && (
+              {/* Limit / Cap / Advance Reminder: Option to auto-skip remaining cycle */}
+              {hasAnyCycleCap && (
                 <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-xl">
                   <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900">
                     <input
@@ -275,15 +443,9 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                       className="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
                     />
                     <div>
-                      <span className="font-semibold block">
-                        {isAdvanceReminderRule && !isMonthlyLimitRule
-                          ? '已提前办理完成，本轮正日前自动免提醒'
-                          : '本月已完成，后续日期自动免提醒'}
-                      </span>
+                      <span className="font-semibold block">{autoSkipCopy.title}</span>
                       <span className="text-[11px] text-amber-700 leading-tight block mt-0.5">
-                        {isAdvanceReminderRule && !isMonthlyLimitRule
-                          ? '勾选后，距本次目标正日前的其余提前提醒日将自动跳过，不再重复弹出。'
-                          : `该任务限制每个自然月完成 ${rule?.monthlyLimit} 次。勾选后将自动跳过本月后续周期的待办提醒。`}
+                        {autoSkipCopy.desc}
                       </span>
                     </div>
                   </label>
@@ -326,3 +488,4 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
     </div>
   );
 };
+

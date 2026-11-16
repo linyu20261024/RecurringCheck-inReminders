@@ -34,6 +34,7 @@ export const DataImportExportModal: React.FC<DataImportExportModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -96,14 +97,13 @@ export const DataImportExportModal: React.FC<DataImportExportModalProps> = ({
     setIsDragging(false);
   };
 
-  // Clear data to empty state
-  const handleClearData = () => {
-    if (confirm('确定要清空当前所有规则和打卡记录吗？清空后数据恢复为初始空白状态。')) {
-      clearLocalStorage();
-      const empty = getEmptyBackup();
-      onDataLoaded(empty);
-      setStatusMsg({ type: 'success', text: '已清空所有本地数据，当前状态为空白。' });
-    }
+  // Clear data to empty state (inline two-step confirmation, avoids window.confirm in iframe)
+  const handleConfirmClearData = () => {
+    clearLocalStorage();
+    const empty = getEmptyBackup();
+    onDataLoaded(empty);
+    setConfirmClear(false);
+    setStatusMsg({ type: 'success', text: '已清空所有本地数据，当前状态为空白。' });
   };
 
   // Export
@@ -190,9 +190,9 @@ export const DataImportExportModal: React.FC<DataImportExportModalProps> = ({
         </div>
 
         {/* Footer with Export & Clear Buttons */}
-        <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {currentData.rules.length > 0 && (
+        <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {(currentData.rules.length > 0 || currentData.records.length > 0) && (
               <button
                 type="button"
                 onClick={handleExport}
@@ -203,22 +203,45 @@ export const DataImportExportModal: React.FC<DataImportExportModalProps> = ({
               </button>
             )}
 
-            {currentData.rules.length > 0 && (
-              <button
-                type="button"
-                onClick={handleClearData}
-                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-1 transition-colors"
-                title="清空当前所有本地数据"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                清空数据
-              </button>
+            {(currentData.rules.length > 0 || currentData.records.length > 0) && (
+              confirmClear ? (
+                <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-2 py-1 rounded-xl">
+                  <span className="text-[11px] font-semibold text-rose-700">确认清空全部?</span>
+                  <button
+                    type="button"
+                    onClick={handleConfirmClearData}
+                    className="px-2 py-0.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-semibold"
+                  >
+                    确定清空
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClear(false)}
+                    className="px-1.5 py-0.5 rounded-lg text-[11px] text-slate-600 hover:bg-white"
+                  >
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(true)}
+                  className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-1 transition-colors"
+                  title="清空当前所有本地数据"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  清空数据
+                </button>
+              )
             )}
           </div>
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              setConfirmClear(false);
+              onClose();
+            }}
             className="px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-900 transition-colors"
           >
             完成

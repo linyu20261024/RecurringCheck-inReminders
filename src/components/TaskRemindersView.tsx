@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { TaskRecord, TaskRule, AppDataBackup } from '../types';
-import { getTodayString, formatGregorianYearlyText } from '../services/dataStorage';
+import { getTodayString, formatGregorianYearlyText, getRulePeriodCapUsage } from '../services/dataStorage';
 import { getLunarDateInfo, getWeekDateRange, formatLunarScheduleText } from '../services/lunarCalendar';
 import { QuickCheckInModal } from './QuickCheckInModal';
 import {
@@ -111,6 +111,17 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     });
     return map;
   }, [data.records, lunarInfo]);
+
+  // Map of period cap usage per rule for currentDate
+  const rulePeriodCapMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getRulePeriodCapUsage>>();
+    data.rules.forEach((rule) => {
+      if (rule.periodCapAmount && rule.periodCapAmount > 0) {
+        map.set(rule.id, getRulePeriodCapUsage(rule, currentDate, data.records));
+      }
+    });
+    return map;
+  }, [data.rules, data.records, currentDate]);
 
   // Records for current date
   const todayRecords = useMemo(() => {
@@ -279,11 +290,30 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     return Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
   }, [filteredRecords, timeSensitiveFirst, sortByTime, rulesMap]);
 
+  const formatCapUnit = (val: number, currency: TaskRecord['currency']) => {
+    if (currency === 'CNY') return `¥${val}`;
+    if (currency === 'points') return `${val}分`;
+    return `${val}`;
+  };
+
+  // Compute smart default actual value respecting singleCapAmount & remaining period cap
+  const computeSmartDefaultActual = (rec: TaskRecord, rule?: TaskRule): number => {
+    let val = rec.expected ?? rule?.amount ?? 0;
+    if (rule?.singleCapAmount && rule.singleCapAmount > 0 && val > rule.singleCapAmount) {
+      val = rule.singleCapAmount;
+    }
+    const capUsage = rule ? rulePeriodCapMap.get(rule.id) : null;
+    if (capUsage && val > capUsage.remainingAmount) {
+      val = capUsage.remainingAmount;
+    }
+    return Math.max(0, Math.round(val * 100) / 100);
+  };
+
   // Quick 1-click single check-in toggle
   const handleQuickToggleDone = (record: TaskRecord) => {
     const rule = rulesMap.get(record.ruleId);
     const isNowDone = record.status !== 'done';
-    const defaultActual = isNowDone ? (record.expected ?? rule?.amount ?? 0) : 0;
+    const defaultActual = isNowDone ? computeSmartDefaultActual(record, rule) : 0;
     const now = new Date().toISOString();
 
     const updated: TaskRecord = {
@@ -294,12 +324,13 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
       received: isNowDone && defaultActual > 0,
     };
 
-    // If it's a period limit or advance-reminder rule and user completed it, auto-skip remaining reminders in this cycle
+    // If it's a period limit, period cap, or advance-reminder rule and user completed it, evaluate auto-skip
     const autoSkipPeriod =
       isNowDone &&
       ((!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
         (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
         (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+        (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
         (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0));
     onUpdateRecord(updated, autoSkipPeriod);
   };
@@ -312,7 +343,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     const now = new Date().toISOString();
     const updatedList: TaskRecord[] = pendingList.map((rec) => {
       const rule = rulesMap.get(rec.ruleId);
-      const defaultActual = rec.expected ?? rule?.amount ?? 0;
+      const defaultActual = computeSmartDefaultActual(rec, rule);
       return {
         ...rec,
         status: 'done',
@@ -334,7 +365,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
     todayRecords.forEach((rec) => {
       if (selectedRecordIds.has(rec.id)) {
         const rule = rulesMap.get(rec.ruleId);
-        const defaultActual = targetStatus === 'done' ? (rec.expected ?? rule?.amount ?? 0) : 0;
+        const defaultActual = targetStatus === 'done' ? computeSmartDefaultActual(rec, rule) : 0;
         toUpdate.push({
           ...rec,
           status: targetStatus,
@@ -889,6 +920,34 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                   </span>
                                 )}
 
+                                {/* Single & Period Benefit Cap Badges */}
+                                {rule?.singleCapAmount && rule.singleCapAmount > 0 && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-teal-50 text-teal-700 border border-teal-200/80"
+                                    title={`单次打卡优惠封顶 ${formatCapUnit(rule.singleCapAmount, rec.currency)}`}
+                                  >
+                                    单次封顶 {formatCapUnit(rule.singleCapAmount, rec.currency)}
+                                  </span>
+                                )}
+                                {(() => {
+                                  const cap = rulePeriodCapMap.get(rec.ruleId);
+                                  if (!cap) return null;
+                                  return (
+                                    <span
+                                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${
+                                        cap.isCapReached
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                          : 'bg-cyan-50 text-cyan-800 border-cyan-200/80'
+                                      }`}
+                                      title={`${cap.scopeLabel} ${formatCapUnit(cap.capAmount, rec.currency)}，累计已享 ${formatCapUnit(cap.usedAmount, rec.currency)}，剩余 ${formatCapUnit(cap.remainingAmount, rec.currency)}`}
+                                    >
+                                      {cap.isCapReached
+                                        ? `${cap.scopeLabel}已满 ${formatCapUnit(cap.capAmount, rec.currency)}`
+                                        : `${cap.scopeLabel} ${formatCapUnit(cap.usedAmount, rec.currency)}/${formatCapUnit(cap.capAmount, rec.currency)} (剩${formatCapUnit(cap.remainingAmount, rec.currency)})`}
+                                    </span>
+                                  );
+                                })()}
+
                                 {/* Yearly Gregorian Frequency indicator */}
                                 {rule?.frequency === 'yearly' && (
                                   <span
@@ -966,7 +1025,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                             <div className="text-right">
                               {rec.currency === 'CNY' ? (
                                 <div className="text-xs font-bold tabular-nums text-slate-800">
-                                  {isDone && (rec.actual ?? 0) > 0 ? (
+                                  {isDone ? (
                                     <span className="text-emerald-700 font-bold">
                                       ¥{(rec.actual ?? 0).toFixed(2)}
                                     </span>
@@ -978,7 +1037,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                 </div>
                               ) : (
                                 <div className="text-xs font-semibold tabular-nums text-amber-600">
-                                  {isDone && (rec.actual ?? 0) > 0
+                                  {isDone
                                     ? `${(rec.actual ?? 0).toLocaleString()} 分`
                                     : `${(rec.expected ?? rule?.amount ?? 0).toLocaleString()} 分`}
                                 </div>
@@ -1034,7 +1093,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                 <div className="divide-y divide-slate-100">
                   {records.map((rec) => {
                     const isDone = rec.status === 'done';
+                    const isSkipped = rec.status === 'skipped' || rec.status === 'canceled';
                     const rule = rulesMap.get(rec.ruleId);
+                    const cap = rulePeriodCapMap.get(rec.ruleId);
                     return (
                       <div
                         key={rec.id}
@@ -1047,9 +1108,12 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                             type="button"
                             onClick={() => handleQuickToggleDone(rec)}
                             className="focus:outline-hidden shrink-0"
+                            title={isDone ? '标记为未完成' : '快捷一键完成'}
                           >
                             {isDone ? (
                               <CheckCircle2 className="w-5 h-5 text-emerald-600 fill-emerald-100" />
+                            ) : isSkipped ? (
+                              <Clock className="w-5 h-5 text-amber-500" />
                             ) : (
                               <Circle className="w-5 h-5 text-slate-300 hover:text-indigo-500" />
                             )}
@@ -1077,6 +1141,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                                 >
                                   <Clock className="w-2.5 h-2.5 shrink-0" />
                                   <span>{rec.time || rule?.time || '09:00'}</span>
+                                  {(rec.deadline || rule?.deadline) && (rec.deadline || rule?.deadline) !== '23:59' && (
+                                    <span className="opacity-75">~{rec.deadline || rule?.deadline}</span>
+                                  )}
                                 </span>
                               )}
 
@@ -1089,6 +1156,38 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                               {rule?.monthlyLimit && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                                   月限{rule.monthlyLimit}次
+                                </span>
+                              )}
+
+                              {rule?.weeklyLimit && rule.weeklyLimit > 0 && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                                  周限{rule.weeklyLimit}次
+                                </span>
+                              )}
+
+                              {rule?.solarTermLimit && rule.solarTermLimit > 0 && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                  每节气限{rule.solarTermLimit}次
+                                </span>
+                              )}
+
+                              {rule?.singleCapAmount && rule.singleCapAmount > 0 && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-teal-50 text-teal-700 border border-teal-200/80">
+                                  单次封顶 {formatCapUnit(rule.singleCapAmount, rec.currency)}
+                                </span>
+                              )}
+
+                              {cap && (
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${
+                                    cap.isCapReached
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-cyan-50 text-cyan-800 border-cyan-200/80'
+                                  }`}
+                                >
+                                  {cap.isCapReached
+                                    ? `${cap.scopeLabel}已满 ${formatCapUnit(cap.capAmount, rec.currency)}`
+                                    : `${cap.scopeLabel} ${formatCapUnit(cap.usedAmount, rec.currency)}/${formatCapUnit(cap.capAmount, rec.currency)} (剩${formatCapUnit(cap.remainingAmount, rec.currency)})`}
                                 </span>
                               )}
 
@@ -1136,10 +1235,10 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-slate-700">
+                          <span className={`text-xs font-semibold tabular-nums ${isDone ? 'text-emerald-700' : 'text-slate-700'}`}>
                             {rec.currency === 'CNY'
-                              ? `¥${(isDone && rec.actual ? rec.actual : rec.expected || 0).toFixed(2)}`
-                              : `${(isDone && rec.actual ? rec.actual : rec.expected || 0).toLocaleString()} 分`}
+                              ? `¥${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toFixed(2)}`
+                              : `${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toLocaleString()} 分`}
                           </span>
                           <button
                             type="button"
@@ -1162,7 +1261,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
         <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden shadow-2xs divide-y divide-slate-100">
           {filteredRecords.map((rec) => {
             const isDone = rec.status === 'done';
+            const isSkipped = rec.status === 'skipped' || rec.status === 'canceled';
             const rule = rulesMap.get(rec.ruleId);
+            const cap = rulePeriodCapMap.get(rec.ruleId);
             return (
               <div
                 key={rec.id}
@@ -1181,9 +1282,12 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                     type="button"
                     onClick={() => handleQuickToggleDone(rec)}
                     className="focus:outline-hidden shrink-0"
+                    title={isDone ? '标记为未完成' : '快捷一键完成'}
                   >
                     {isDone ? (
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 fill-emerald-100" />
+                    ) : isSkipped ? (
+                      <Clock className="w-5 h-5 text-amber-500" />
                     ) : (
                       <Circle className="w-5 h-5 text-slate-300 hover:text-indigo-500" />
                     )}
@@ -1210,6 +1314,9 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                         >
                           <Clock className="w-2.5 h-2.5 shrink-0" />
                           <span>{rec.time || rule?.time || '09:00'}</span>
+                          {(rec.deadline || rule?.deadline) && (rec.deadline || rule?.deadline) !== '23:59' && (
+                            <span className="opacity-75">~{rec.deadline || rule?.deadline}</span>
+                          )}
                         </span>
                       )}
 
@@ -1222,6 +1329,38 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                       {rule?.monthlyLimit && (
                         <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                           月限{rule.monthlyLimit}次
+                        </span>
+                      )}
+
+                      {rule?.weeklyLimit && rule.weeklyLimit > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          周限{rule.weeklyLimit}次
+                        </span>
+                      )}
+
+                      {rule?.solarTermLimit && rule.solarTermLimit > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                          每节气限{rule.solarTermLimit}次
+                        </span>
+                      )}
+
+                      {rule?.singleCapAmount && rule.singleCapAmount > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-teal-50 text-teal-700 border border-teal-200/80">
+                          单次封顶 {formatCapUnit(rule.singleCapAmount, rec.currency)}
+                        </span>
+                      )}
+
+                      {cap && (
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${
+                            cap.isCapReached
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-cyan-50 text-cyan-800 border-cyan-200/80'
+                          }`}
+                        >
+                          {cap.isCapReached
+                            ? `${cap.scopeLabel}已满 ${formatCapUnit(cap.capAmount, rec.currency)}`
+                            : `${cap.scopeLabel} ${formatCapUnit(cap.usedAmount, rec.currency)}/${formatCapUnit(cap.capAmount, rec.currency)} (剩${formatCapUnit(cap.remainingAmount, rec.currency)})`}
                         </span>
                       )}
 
@@ -1267,10 +1406,10 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs font-bold tabular-nums text-slate-700">
+                  <span className={`text-xs font-bold tabular-nums ${isDone ? 'text-emerald-700' : 'text-slate-700'}`}>
                     {rec.currency === 'CNY'
-                      ? `¥${(isDone && rec.actual ? rec.actual : rec.expected || 0).toFixed(2)}`
-                      : `${(isDone && rec.actual ? rec.actual : rec.expected || 0).toLocaleString()} 分`}
+                      ? `¥${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toFixed(2)}`
+                      : `${(isDone ? (rec.actual ?? 0) : (rec.expected ?? rule?.amount ?? 0)).toLocaleString()} 分`}
                   </span>
                   <button
                     type="button"
@@ -1291,6 +1430,7 @@ export const TaskRemindersView: React.FC<TaskRemindersViewProps> = ({
         <QuickCheckInModal
           record={activeCheckInRecord}
           rule={rulesMap.get(activeCheckInRecord.ruleId)}
+          allRecords={data.records}
           isOpen={true}
           onClose={() => setActiveCheckInRecord(null)}
           onSave={onUpdateRecord}

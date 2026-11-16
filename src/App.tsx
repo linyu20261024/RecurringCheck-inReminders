@@ -106,11 +106,12 @@ export default function App() {
     }
   }, [currentDate, data?.rules]);
 
-  // Update a single record (supports auto-skipping remaining days in period when weekly/monthly/solar limit or advance reminder reached)
+  // Update a single record (supports auto-skipping or restoring remaining days in period)
   const handleUpdateRecord = useCallback((updated: TaskRecord, skipRestOfPeriod?: boolean) => {
     setData((prev) => {
       if (!prev) return prev;
       const index = prev.records.findIndex((r) => r.id === updated.id);
+      const prevStatus = index >= 0 ? prev.records[index].status : undefined;
       let newRecords: TaskRecord[];
       if (index >= 0) {
         newRecords = [...prev.records];
@@ -125,11 +126,14 @@ export default function App() {
         (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
         (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
         (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+        (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
         (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
 
-      const shouldSkipFuture = skipRestOfPeriod || (updated.status === 'done' && hasAnyCap);
+      // Run limit/cap evaluation both when completing AND when reverting a completed task
+      const shouldEvaluatePeriod =
+        skipRestOfPeriod || (hasAnyCap && (updated.status === 'done' || prevStatus === 'done'));
 
-      if (shouldSkipFuture) {
+      if (shouldEvaluatePeriod) {
         nextData = skipFutureMonthlyLimitRecords(
           nextData,
           updated.ruleId,
@@ -152,7 +156,7 @@ export default function App() {
     });
   }, []);
 
-  // Batch update records
+  // Batch update records (also applies period limit/cap/advance-reminder auto-skip)
   const handleBatchUpdateRecords = useCallback((updatedList: TaskRecord[]) => {
     setData((prev) => {
       if (!prev) return prev;
@@ -160,7 +164,27 @@ export default function App() {
       updatedList.forEach((r) => map.set(r.id, r));
 
       const newRecords = prev.records.map((r) => (map.has(r.id) ? map.get(r.id)! : r));
-      const nextData: AppDataBackup = { ...prev, records: newRecords };
+      let nextData: AppDataBackup = { ...prev, records: newRecords };
+
+      for (const updated of updatedList) {
+        if (updated.status !== 'done') continue;
+        const rule = nextData.rules.find((r) => r.id === updated.ruleId);
+        const hasAnyCap =
+          (!!rule?.monthlyLimit && rule.monthlyLimit > 0) ||
+          (!!rule?.weeklyLimit && rule.weeklyLimit > 0) ||
+          (!!rule?.solarTermLimit && rule.solarTermLimit > 0) ||
+          (!!rule?.periodCapAmount && rule.periodCapAmount > 0) ||
+          (!!rule?.remindAdvanceDays && rule.remindAdvanceDays > 0);
+        if (hasAnyCap) {
+          nextData = skipFutureMonthlyLimitRecords(
+            nextData,
+            updated.ruleId,
+            updated.date,
+            updated.targetDate
+          );
+        }
+      }
+
       saveDataToLocalStorage(nextData);
       return nextData;
     });
@@ -218,7 +242,7 @@ export default function App() {
     );
   }
 
-  const hasData = !!data && data.rules.length > 0;
+  const hasData = !!data && (data.rules.length > 0 || data.records.length > 0);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
